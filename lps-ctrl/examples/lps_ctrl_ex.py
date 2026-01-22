@@ -1,5 +1,5 @@
 import argparse
-from src.lps_ctrl.lps_ctrl import ESP32BTSender
+from lps_ctrl.lps_ctrl import ESP32BTSender
 import time
 import json
 PORT = 'COM3' 
@@ -24,4 +24,5 @@ def main():
     except Exception as e:
         print(f"Main execution error: {e}")
 if __name__ == "__main__":
+
     main()
