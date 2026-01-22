@@ -38,7 +38,7 @@ Return: True 代表執行成功且收到 ESP32 回應；False 代表失敗或超
 
 ## 使用範例
 ```
-from src.lps_ctrl.lps_ctrl import ESP32BTSender
+from lps_ctrl import ESP32BTSender
 
 # 請修改為實際 COM Port
 PORT = 'COM13' 

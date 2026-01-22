@@ -1,5 +1,5 @@
 import argparse
-from lps_ctrl.lps_ctrl import ESP32BTSender
+from lps_ctrl import ESP32BTSender
 import time
 import json
 PORT = 'COM3' 
