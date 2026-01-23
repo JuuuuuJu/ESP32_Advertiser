@@ -64,10 +64,10 @@ cmd_in,delay_us,prep_led_us,target_mask,in_data[0],in_data[1],in_data[2]
 **範例封包**:
 
 ```text
-17,3000000,1000000,5,255,0,0
+22,3000000,1000000,5,255,0,0
 ```
 
-* `17`: 代表 ID=1, Command=PLAY (1*16 + 1)
+* `22`: 代表 ID=1, Command=TEST (1*16 + 6)
 * `3000000`: 延遲 3 秒
 * `1000000`: delay 燈持續 1 秒
 * `5`: 目標為 ID 0 和 2
