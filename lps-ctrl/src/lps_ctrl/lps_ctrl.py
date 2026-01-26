@@ -128,7 +128,54 @@ class ESP32BTSender:
 
         logger.error("Failed to send command after retries.")
         return self._format_response(-1, cmd_input, target_ids, idx, last_error_msg)
+    def check_status(self):
+        if not self.ser or not self.ser.is_open:
+            return {"statusCode": -1, "message": "Port not open"}
 
+        logger.info("Sending CHECK command...")
+        self.ser.reset_input_buffer()
+        self.ser.write(b"CHECK\n")
+        try:
+            ack = self.ser.read_until(b'\n').decode().strip()
+            if "ACK:CHECK_START" not in ack:
+                logger.warning(f"Did not receive CHECK ACK. Got: {ack}")
+                # return error?
+        except Exception as e:
+            logger.error(f"Error reading start ack: {e}")
+        found_packets = []
+        start_time = time.time()
+        
+        while (time.time() - start_time) < 4.0:
+            line_bytes = self.ser.read_until(b'\n')
+            if not line_bytes:
+                continue
+            
+            line = line_bytes.decode(errors='ignore').strip()
+            
+            if line == "CHECK_DONE":
+                logger.info("Get CHECK_DONE\n")
+                break
+                
+            if line.startswith("FOUND:"):
+                parts = line.replace("FOUND:", "").split(',')
+                if len(parts) >= 4:
+                    packet = {
+                        "target_id": int(parts[0]),
+                        "cmd_id": int(parts[1]),
+                        "cmd_type": int(parts[2]),
+                        "target_delay": int(parts[3])
+                    }
+                    if packet not in found_packets:
+                        found_packets.append(packet)
+        return {
+            "from": "Host_PC",
+            "topic": "check_report",
+            "statusCode": 0,
+            "payload": {
+                "scan_duration_sec": 2,
+                "found_devices": found_packets
+            }
+        }
     def __enter__(self):
         self.connect()
         return self
