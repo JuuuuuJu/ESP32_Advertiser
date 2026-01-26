@@ -26,4 +26,3 @@ typedef struct {
 } bt_sender_config_t;
 
 int bt_sender_execute_burst(const bt_sender_config_t *config);
-void bt_sender_start_check(uint32_t duration_ms);
