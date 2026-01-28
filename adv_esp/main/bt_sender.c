@@ -105,21 +105,14 @@ static void hci_cmd_send_reset(void) {
 
 static void controller_rcv_pkt_ready(void) {}
 static int host_rcv_pkt(uint8_t *data, uint16_t len) {
-    // printf("Enter host_rcv_pkt\n");
     if(!is_checking) return ESP_OK;
     if(data[0] != 0x04 || data[1] != 0x3E || data[3] != 0x02) return ESP_OK;
 
     uint8_t num_reports = data[4];
     uint8_t* payload = &data[5];
-    // printf("SCAN_EVENT: Found %d devices\n", num_reports);
     for(int i = 0; i < num_reports; i++) {
         uint8_t data_len = payload[8];
         uint8_t* adv_data = &payload[9];
-        // printf("PKT[%d]: ", i);
-        // for(int j=0; j<data_len; j++) {
-        //     printf("%02X ", adv_data[j]);
-        // }
-        // printf("\n");
         uint8_t offset = 0;
         while(offset < data_len) {
             uint8_t ad_len = adv_data[offset++];
@@ -127,10 +120,6 @@ static int host_rcv_pkt(uint8_t *data, uint16_t len) {
             uint8_t ad_type = adv_data[offset++];
 
             if(ad_type == 0xFF && ad_len >= 8) { // Manuf Data
-                // printf("DEBUG_RAW: ");
-                // for(int k=0; k<ad_len-1; k++) printf("%02X ", adv_data[offset+k]);
-                // printf("\n");
-                // Check Manuf ID 0xFFFF
                  if(adv_data[offset] == 0xFF && adv_data[offset + 1] == 0xFF) {
                      // Check Type == 0x08 (ACK)
                      if (adv_data[offset+2] == 0x08) {
@@ -206,7 +195,6 @@ int bt_sender_execute_burst(const bt_sender_config_t *config) {
     }
 
     int burst_count = config->delay_us / 20000;
-    //要改回100
     if (burst_count > 20) burst_count = 20; // Cap burst count to 100 for safety
     int64_t start_us = esp_timer_get_time();
     int64_t target_us = start_us + config->delay_us;
