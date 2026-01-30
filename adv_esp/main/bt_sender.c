@@ -12,15 +12,35 @@
 #include "esp_rom_sys.h"
 
 #define TX_OFFSET_US 9000 // Estimated time offset for TX in microseconds based on empirical measurements
+#ifndef HCI_GRP_HOST_CONT_BASEBAND_CMDS
+#define HCI_GRP_HOST_CONT_BASEBAND_CMDS (0x03 << 10)
+#endif
 
+#ifndef HCI_GRP_BLE_CMDS
+#define HCI_GRP_BLE_CMDS               (0x08 << 10)
+#endif
+
+#ifndef HCI_SET_EVT_MASK
+#define HCI_SET_EVT_MASK               (0x0001 | HCI_GRP_HOST_CONT_BASEBAND_CMDS)
+#endif
+
+#ifndef HCI_BLE_WRITE_SCAN_PARAM
+#define HCI_BLE_WRITE_SCAN_PARAM       (0x000B | HCI_GRP_BLE_CMDS)
+#endif
+#ifndef HCI_BLE_WRITE_SCAN_ENABLE
+#define HCI_BLE_WRITE_SCAN_ENABLE      (0x000C | HCI_GRP_BLE_CMDS)
+#endif
+#ifndef HCIC_PARAM_SIZE_SET_EVENT_MASK
+#define HCIC_PARAM_SIZE_SET_EVENT_MASK         (8)
+#endif
 static const char *TAG = "BT_SENDER";
 static volatile int64_t last_measured_latency = 0;
 static int64_t t1_start = 0;
 static uint8_t hci_cmd_buf[128];
 static bool is_initialized = false;
-
+static bool is_checking = false;
 // Helper functions to send HCI commands
-static void hci_cmd_send_ble_set_adv_data(uint8_t cmd_type, uint32_t delay_us, uint32_t prep_led_us, uint64_t target_mask,uint8_t data[3]) {
+static void hci_cmd_send_ble_set_adv_data(uint8_t cmd_type, uint32_t delay_us, uint32_t prep_led_us, uint64_t target_mask,const uint8_t *data) {
     uint8_t raw_adv_data[31];
     uint8_t idx = 0;
     
@@ -84,9 +104,58 @@ static void hci_cmd_send_reset(void) {
 }
 
 static void controller_rcv_pkt_ready(void) {}
-static int host_rcv_pkt(uint8_t *data, uint16_t len) { return ESP_OK; }
-static esp_vhci_host_callback_t vhci_host_cb = { controller_rcv_pkt_ready, host_rcv_pkt };
+static int host_rcv_pkt(uint8_t *data, uint16_t len) {
+    if(!is_checking) return ESP_OK;
+    if(data[0] != 0x04 || data[1] != 0x3E || data[3] != 0x02) return ESP_OK;
 
+    uint8_t num_reports = data[4];
+    uint8_t* payload = &data[5];
+    for(int i = 0; i < num_reports; i++) {
+        uint8_t data_len = payload[8];
+        uint8_t* adv_data = &payload[9];
+        uint8_t offset = 0;
+        while(offset < data_len) {
+            uint8_t ad_len = adv_data[offset++];
+            if(ad_len == 0) break;
+            uint8_t ad_type = adv_data[offset++];
+
+            if(ad_type == 0xFF && ad_len >= 8) { // Manuf Data
+                 if(adv_data[offset] == 0xFF && adv_data[offset + 1] == 0xFF) {
+                     // Check Type == 0x08 (ACK)
+                     if (adv_data[offset+2] == 0x08) {
+                         uint8_t target_id = adv_data[offset+3];
+                         uint8_t cmd_id    = adv_data[offset+4];
+                         uint8_t cmd_type  = adv_data[offset+5];
+                         uint32_t delay    = (adv_data[offset+6] << 24) | (adv_data[offset+7] << 16) | (adv_data[offset+8] << 8) | adv_data[offset+9];
+                         
+                         printf("FOUND:%d,%d,%d,%lu\n", target_id, cmd_id, cmd_type, delay);
+                     }
+                 }
+            }
+            offset += (ad_len - 1);
+        }
+        payload += (10 + data_len + 1);
+    }
+    return ESP_OK;
+}
+static esp_vhci_host_callback_t vhci_host_cb = { controller_rcv_pkt_ready, host_rcv_pkt };
+static void hci_cmd_send_set_event_mask(void) {
+    uint8_t buf[128];
+    uint8_t *p = buf;
+    
+    // receive LE Meta Event (Bit 61)
+    // Mask: 00 00 00 00 00 00 00 20
+    uint8_t mask[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20};
+
+    // HCI Command (Opcode: 0x0C01)
+    *p++ = 0x01; // HCI_COMMAND_PKT
+    *p++ = 0x01; // Opcode LSB (0x01)
+    *p++ = 0x0C; // Opcode MSB (0x0C) -> 0x0C01 (Set Event Mask)
+    *p++ = 0x08; // Param Len
+    memcpy(p, mask, 8);
+    
+    esp_vhci_host_send_packet(buf, 4 + 8);
+}
 esp_err_t bt_sender_init(void) {
     if (is_initialized) return ESP_OK;
 
@@ -110,6 +179,7 @@ esp_err_t bt_sender_init(void) {
     // HCI Commands Initialization
     hci_cmd_send_reset();
     vTaskDelay(100 / portTICK_PERIOD_MS);
+    hci_cmd_send_set_event_mask();
     hci_cmd_send_ble_set_adv_param();
     vTaskDelay(100 / portTICK_PERIOD_MS);
 
@@ -125,7 +195,7 @@ int bt_sender_execute_burst(const bt_sender_config_t *config) {
     }
 
     int burst_count = config->delay_us / 20000;
-    if (burst_count > 100) burst_count = 100; // Cap burst count to 100 for safety
+    if (burst_count > 20) burst_count = 20; // Cap burst count to 100 for safety
     int64_t start_us = esp_timer_get_time();
     int64_t target_us = start_us + config->delay_us;
     
@@ -151,4 +221,29 @@ int bt_sender_execute_burst(const bt_sender_config_t *config) {
     }
 
     return burst_count;
+}
+void bt_sender_start_check(uint32_t duration_ms) {
+    if (!is_initialized) return;
+
+    is_checking = true;
+
+    hci_cmd_send_ble_adv_stop();
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    // Scan Interval 100ms, Window 100ms
+    uint8_t buf[128];
+    make_cmd_ble_set_scan_params(buf, 0, 0x00A0, 0x00A0, 0, 0); 
+    esp_vhci_host_send_packet(buf, 7 + 4); // param size adjustment needed
+    vTaskDelay(pdMS_TO_TICKS(20));
+
+    make_cmd_ble_set_scan_enable(buf, 1, 0);
+    esp_vhci_host_send_packet(buf, 2 + 4);
+
+    vTaskDelay(pdMS_TO_TICKS(duration_ms));
+
+    make_cmd_ble_set_scan_enable(buf, 0, 0);
+    esp_vhci_host_send_packet(buf, 2 + 4);
+
+    is_checking = false;
+    printf("CHECK_DONE\n");
 }

@@ -1,122 +1,148 @@
 # ESP32 BLE Advertiser (UART Controlled)
 
-本專案將 ESP32 作為 BLE 廣播發射器，透過 UART 接收 PC 端的指令，並利用 Raw HCI 介面發送帶有精確倒數計時的 BLE 廣播封包。
+This project configures the ESP32 as a BLE advertising sender. It receives text commands from a PC via UART and uses the Raw HCI interface to send BLE advertising packets containing precise countdown timers.
 
-## 簡介
+## Introduction
 
-主要運作流程如下：
+The main workflow is as follows:
 
-1.  接收指令 (UART)：透過 USB Serial 接收來自 PC 的文字指令。
-2.  藍牙廣播 (BLE Burst)：使用 Raw HCI (Host Controller Interface) 直接控制藍牙控制器，不建立連線，只是發送廣播封包。
-3.  同步倒數：在指定的延遲時間內，連續發送一連串的廣播封包 (Burst)，封包內含「剩餘時間」，讓接收端能精準同步執行動作。
+1.  **Receive Command (UART):** Receives text commands from the PC via USB Serial.
+2.  **BLE Broadcasting (BLE Burst):** Uses the Raw HCI (Host Controller Interface) to directly control the Bluetooth controller to broadcast packets without establishing a connection.
+3.  **Synchronized Countdown:** Continuously transmits a series of broadcast packets (Burst) within a specified delay time. These packets contain the "remaining time," allowing the receiver to synchronize actions precisely.
 
-
-
-## 專案結構
+## Project Structure
 
 ```text
 ├── adv_esp/
 │   ├── CMakeLists.txt      
 │   └── main/
 │       ├── CMakeLists.txt  
-│       ├── main.c          # UART 處理、指令解析、任務排程
-│       ├── bt_sender.c     # BLE HCI 控制、廣播封包組建
-│       └── bt_sender.h     # 標頭檔
+│       ├── main.c          # UART handling, command parsing, task scheduling
+│       ├── bt_sender.c     # BLE HCI control, packet assembly
+│       └── bt_sender.h     # Header file
+
 ```
 
-## UART 通訊協定
+## UART Protocol
 
-UART 設定如下：
+UART settings are as follows:
 
 * **Baud Rate**: `921600`
 * **Data bits**: 8, **Stop bits**: 1, **Parity**: None
 * **Flow Control**: Disable
 
-### 1. 接收指令格式 (PC -> ESP32)
+### 1. Command Format (PC -> ESP32)
 
-Python 端的 `lps_ctrl.py` 會將資料格式化為以下結構用字串的形式發送：
+The Python script (`lps_ctrl.py`) formats data into the following string structure for transmission:
 
 ```text
 cmd_in,delay_us,prep_led_us,target_mask,in_data[0],in_data[1],in_data[2]
 ```
 
-| 參數 | 類型 | 說明 |
+| Parameter | Type | Description |
 | --- | --- | --- |
-| **cmd_in** | `int` | 包含 Command ID 與 Command Type 的組合值。格式為：`(Command_ID * 16) + Command_Type`，也就是 4 bits ( Command ID ) + 1 bit ( blank ) + 3 bits ( Command Type ) |
-| **delay_us** | `unsigned long` | 預期送達時間 (us)，至少 1 秒 。 |
-| **prep_led_us** | `unsigned long` | delay 燈持續時間 (us) |
-| **target_mask** | `unsigned long long` | 目標 ID 的 Bitmask，例如 `5` 代表 `00...0101` (ID 0 & 2) |
-| **in_data[0]** | `int` | 資料 0 (R 值 / Command ID ) |
-| **in_data[1]** | `int` | 資料 1 (G 值) |
-| **in_data[2]** | `int` | 資料 2 (B 值) |
+| **cmd_in** | `int` | Combined value of Command ID and Command Type. Format: `(Command_ID * 16) + Command_Type`. ( 4 bits ( Command ID ) + 1 bit ( blank ) + 3 bits ( Command Type ) ) |
+| **delay_us** | `unsigned long` | Expected arrival time (us), at least 1 second. |
+| **prep_led_us** | `unsigned long` | Duration for the preparation LED (us). |
+| **target_mask** | `unsigned long long` | Bitmask for target IDs. E.g., `5` represents `00...0101` (ID 0 & 2). |
+| **in_data[0]** | `int` | Data 0 (Red value / Command ID). |
+| **in_data[1]** | `int` | Data 1 (Green value). |
+| **in_data[2]** | `int` | Data 2 (Blue value). |
 
+| Command | map code | Description | Data Parameters |
+| --- | --- | --- | --- |
+| **PLAY** | 0x01 | Start | `[0, 0, 0]` |
+| **PAUSE** | 0x02 | Pause | `[0, 0, 0]` |
+| **RESET** | 0x03 | Reset | `[0, 0, 0]` |
+| **RELEASE** | 0x04 | Enter `UNLOAD` state | `[0, 0, 0]` |
+| **LOAD** | 0x05 | Enter `READY` state | `[0, 0, 0]` |
+| **TEST** | 0x06 | Change LED color | `[R, G, B]` (0-255) |
+| **CANCEL** | 0x07 | Cancel specific command | `[cmd_id, 0, 0]` |
 
-| Command     | map code    | 說明                     | data 參數           |
-|:----------- |:--- |:------------------------ |:------------------- |
-| **PLAY**    | 0x01 | 開始                     | `[0, 0, 0]`         |
-| **PAUSE**   | 0x02 | 暫停                     | `[0, 0, 0]`         |
-| **RESET**   | 0x03 | 重置                     | `[0, 0, 0]`         |
-| **RELEASE** | 0x04 | 進入 `UNLOAD` state      | `[0, 0, 0]`         |
-| **LOAD**    | 0x05 | 進入 `READY` state       | `[0, 0, 0]`         |
-| **TEST**    | 0x06 | 改變 LED 顏色            | `[R, G, B]` (0-255) |
-| **CANCEL**  | 0x07 | 取消特定command id的指令 | `[cmd_id, 0, 0]`    |
-
-**範例封包**:
+**Example Packet**:
 
 ```text
 22,3000000,1000000,5,255,0,0
 ```
+* `22`: Represents ID=1, Command=TEST (1*16 + 6)
+* `3000000`: 3 seconds delay
+* `1000000`: Preparation LED duration of 1 second
+* `5`: Targets are IDs 0 and 2
+* `255,0,0`: Red
+### 2. Response Format (ESP32 -> PC)
 
-* `22`: 代表 ID=1, Command=TEST (1*16 + 6)
-* `3000000`: 延遲 3 秒
-* `1000000`: delay 燈持續 1 秒
-* `5`: 目標為 ID 0 和 2
-* `255,0,0`: 紅色
+#### Successful Receipt (ACK)
 
-### 2. 回應格式 (ESP32 -> PC)
-
-ESP32 會回傳執行狀態與延遲測量數據。
-
-#### 成功接收 (ACK)
-
-當指令解析成功，ESP32 會回傳：
+When the command is parsed successfully, the ESP32 returns:
 
 ```text
 ACK:OK:<read_latency>:<parse_latency>:<total_latency>
 ```
+* Data units are in microseconds (us), used for the PC to calculate transmission latency. (For testing purposes)
+#### Execution Complete (DONE)
 
-* 數據單位皆為微秒 (us)，用於讓 PC 端計算傳輸延遲。(測試用)
-
-#### 執行完成 (DONE)
-
-當 Burst 廣播序列發送完畢後回傳：
+Returned when the Burst broadcast sequence is finished:
 
 ```text
 DONE
 ```
 
-#### 錯誤 (NAK)
+#### Error (NAK)
 
-* `NAK:ParseError`: 參數數量不足或格式錯誤。
-* `NAK:Overflow`: 接收緩衝區溢出。
+* `NAK:ParseError`: Insufficient parameters or incorrect format.
+* `NAK:Overflow`: Receive buffer overflow.
 
-## BLE 廣播封包結構
+### 3. Check Status
 
-封包內容放在 Manufacturer Specific Data，在`hci_cmd_send_ble_set_adv_data`裡發送。
+The PC can send a CHECK command to switch the ESP32 into scanning mode temporarily to listen for ACK feedback signals from Receivers.
 
-| Byte | 內容 | 說明 |
+**PC Sends:**
+
+```text
+CHECK
+```
+
+**ESP32 Response Flow:**
+
+1. **Confirmation:**
+```text
+ACK:CHECK_START
+```
+
+
+2. **Reporting Found Devices (Continuous during scan):**
+When an ACK packet (Type 0x08) from a receiver is scanned, ESP32 returns:
+```text
+FOUND:<target_id>,<cmd_id>,<cmd_type>,<delay>
+```
+
+
+* `target_id`: Receiver's Player ID.
+* `cmd_id`: The Command ID currently locked by the device.
+* `cmd_type`: The command type executed by the device.
+* `delay`: The delay time calculated by the device (us).
+
+
+3. **Scan Complete:**
+After the scan duration (default 4 seconds), returns:
+```text
+CHECK_DONE
+```
+
+## BLE Advertising Packet Structure
+
+The packet content is placed in the Manufacturer Specific Data section, sent via `hci_cmd_send_ble_set_adv_data`.
+
+| Byte | Content | Description |
 | --- | --- | --- |
 | 0-1 | `0xFFFF` | Company ID (Reserved) |
-| 2 | `cmd` | Command Type (含 ID) |
-| 3-10 | `target_mask` | 8 Bytes，支援 ID 0~63 |
-| 11-14 | `delay_us` | 剩餘延遲時間 (微秒) |
-| 15-18 | `prep_led_us` | 預備時間 (微秒) |
-| 19-21 | `R, G, B or cancel cmd_id` | 顏色數據 or 要 cancel 的 command id |
+| 2 | `cmd` | Command Type (includes ID) |
+| 3-10 | `target_mask` | 8 Bytes, supports IDs 0~63 |
+| 11-14 | `delay_us` | Remaining delay time (microseconds) |
+| 15-18 | `prep_led_us` | Preparation time (microseconds) |
+| 19-21 | `R, G, B` | Color data or command ID to cancel |
 
+## Notes
 
-## 注意事項
-
-1. **Latency 補償**: 內建 `TX_OFFSET_US` (預設 9000us) 用於補償發送指令到實際發出無線訊號的硬體延遲，可於 `bt_sender.c` 中調整。
-2. **Baud Rate**: 務必確保 Python 端與 ESP32 端皆設定為 `921600`。
-
-
+1. **Latency Compensation**: There is a built-in `TX_OFFSET_US` (default 9000us) to compensate for the hardware delay between sending the command and the actual wireless transmission. This can be adjusted in `bt_sender.c`.
+2. **Baud Rate**: Ensure both the Python script and the ESP32 are configured to `921600`.
