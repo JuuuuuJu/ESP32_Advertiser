@@ -27,8 +27,8 @@ void process_byte(uint8_t c, int64_t t_wake, int64_t t_read_done) {
         packet_buf[packet_idx] = '\0';
         if (strncmp(packet_buf, "CHECK", 5) == 0) {
             uart_write_bytes(UART_PORT_NUM, "ACK:CHECK_START\n", 16);
-            //要改回2000
-            bt_sender_start_check(4000); 
+            //2000 or 4000(OK)?
+            bt_sender_start_check(2000); 
             
         }
         else{

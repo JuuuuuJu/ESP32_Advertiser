@@ -28,8 +28,8 @@ __init__(port, baud_rate=921600, timeout=10)
 
 Sends a command packet burst to the ESP32 and waits for the execution result.
 
-```python
-send_burst(cmd_input, delay_sec, prep_led_sec, target_ids, data, retries=3)
+```python3
+send_burst(cmd_input, delay_sec, prep_led_sec, target_ids, data)
 ```
 
 #### Parameters
@@ -41,7 +41,6 @@ send_burst(cmd_input, delay_sec, prep_led_sec, target_ids, data, retries=3)
 | **prep_led_sec** | `float` | Duration for the preparation LED (seconds). |
 | **target_ids** | `list[int]` | List of target device IDs (e.g., [0, 2, 5]). |
 | **data** | `list[int]` | Additional data, must contain 3 integers `[d0, d1, d2]`. |
-| **retries** | `int` | Number of automatic retries if no ACK is received from ESP32. Default is `3`. |
 
 #### Supported Commands and Data Mapping
 
@@ -137,10 +136,9 @@ def main():
                 delay_sec=5, 
                 prep_led_sec=1,
                 target_ids=[0, 1, 5],
-                data=[0, 0, 0], 
-                retries=3,
+                data=[0, 0, 0],
             )
-            print(f"Result: {json.dumps(response, indent=4, ensure_ascii=False)}")
+            print(f"{json.dumps(response, indent=4, ensure_ascii=False)}")
             
             # 2. Check Status
             # Ask Sender to scan for Receivers' ACK
