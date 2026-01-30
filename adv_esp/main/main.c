@@ -61,8 +61,7 @@ void process_byte(uint8_t c, int64_t t_wake, int64_t t_read_done) {
                     .data[2]=(uint8_t)in_data[2]
                 };
                 bt_sender_execute_burst(&burst_cfg);
-                uart_write_bytes(UART_PORT_NUM, "DONE\n", 5);
-                // bt_sender_start_check(2000);
+                // uart_write_bytes(UART_PORT_NUM, "DONE\n", 5);
             } else {
                 uart_write_bytes(UART_PORT_NUM, "NAK:ParseError\n", 15);
             }
