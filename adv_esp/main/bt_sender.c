@@ -127,8 +127,8 @@ static int host_rcv_pkt(uint8_t *data, uint16_t len) {
                          uint8_t cmd_id    = adv_data[offset+4];
                          uint8_t cmd_type  = adv_data[offset+5];
                          uint32_t delay    = (adv_data[offset+6] << 24) | (adv_data[offset+7] << 16) | (adv_data[offset+8] << 8) | adv_data[offset+9];
-                         
-                         printf("FOUND:%d,%d,%d,%lu\n", target_id, cmd_id, cmd_type, delay);
+                         uint8_t state = adv_data[offset+10];
+                         printf("FOUND:%d,%d,%d,%lu,%d\n", target_id, cmd_id, cmd_type, delay, state);
                      }
                  }
             }

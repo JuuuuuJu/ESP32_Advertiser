@@ -9,7 +9,13 @@ cmd_list = [0]*16
 idx=-1
 class ESP32BTSender:
     CMD_MAP = { "PLAY": 0x01, "PAUSE": 0x02,"RESET": 0x03, "RELEASE": 0x04,  "LOAD": 0x05,"TEST": 0x06,  "CANCEL": 0x07 }
-
+    STATE_MAP = {
+        0: "UNLOADED",
+        1: "READY",
+        2: "PLAYING",
+        3: "PAUSE",
+        4: "TEST"
+    }
     def __init__(self, port, baud_rate=921600, timeout=10):
         self.port = port
         self.baud_rate = baud_rate
@@ -53,9 +59,12 @@ class ESP32BTSender:
         delay_us = int(delay_sec * 1_000_000)
         prep_led_us = int(prep_led_sec * 1_000_000)
         target_mask = 0
-        for pid in target_ids:
-            target_mask |= (1 << pid)
-        
+        if not target_ids:
+            target_mask = 0xFFFFFFFFFFFFFFFF
+        else:
+            for pid in target_ids:
+                if pid > 0:
+                    target_mask |= (1 << (pid - 1))
         packet=""
         t_start_pc = time.perf_counter()
         target_time = t_start_pc + delay_sec
@@ -98,13 +107,19 @@ class ESP32BTSender:
 
         logger.error("Failed to send command.")
         return self._format_response(-1, cmd_input, target_ids, idx, last_error_msg)
-    def check_status(self):
+    def check_status(self, target_ids=[]):
         if not self.ser or not self.ser.is_open:
             return {"statusCode": -1, "message": "Port not open"}
-
+        target_mask = 0
+        if not target_ids:
+            target_mask = 0xFFFFFFFFFFFFFFFF
+        else:
+            for pid in target_ids:
+                if pid > 0:
+                    target_mask |= (1 << (pid - 1))
         logger.info("Sending CHECK command...")
         self.ser.reset_input_buffer()
-        self.ser.write(b"CHECK\n")
+        self.ser.write(f"CHECK,{target_mask:x}\n".encode())
         try:
             ack = self.ser.read_until(b'\n').decode().strip()
             if "ACK:CHECK_START" not in ack:
@@ -114,7 +129,7 @@ class ESP32BTSender:
         found_packets = []
         start_time = time.time()
         
-        while (time.time() - start_time) < 4.0:
+        while (time.time() - start_time) < 2.0:
             line_bytes = self.ser.read_until(b'\n')
             if not line_bytes:
                 continue
@@ -127,12 +142,14 @@ class ESP32BTSender:
                 
             if line.startswith("FOUND:"):
                 parts = line.replace("FOUND:", "").split(',')
-                if len(parts) >= 4:
+                if len(parts) >= 5:
+                    state = self.STATE_MAP.get(int(parts[4]),"UNKNOWN")
                     packet = {
                         "target_id": int(parts[0]),
                         "cmd_id": int(parts[1]),
                         "cmd_type": int(parts[2]),
-                        "target_delay": int(parts[3])
+                        "target_delay": int(parts[3]),
+                        "state": state
                     }
                     if packet not in found_packets:
                         found_packets.append(packet)

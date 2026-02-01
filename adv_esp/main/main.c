@@ -26,10 +26,21 @@ void process_byte(uint8_t c, int64_t t_wake, int64_t t_read_done) {
     if (c == '\n') {
         packet_buf[packet_idx] = '\0';
         if (strncmp(packet_buf, "CHECK", 5) == 0) {
+            unsigned long long check_target_mask = 0xFFFFFFFFFFFFFFFF;
+            char *p = strchr(packet_buf, ',');
+            if (p) {
+                check_target_mask = strtoull(p + 1, NULL, 16);
+            }
             uart_write_bytes(UART_PORT_NUM, "ACK:CHECK_START\n", 16);
-            //2000 or 4000(OK)?
+            bt_sender_config_t check_cfg = {
+                .cmd_type = 0x08,
+                .delay_us = 600000,
+                .prep_led_us = 0,
+                .target_mask = check_target_mask,
+                .data = {0, 0, 0}
+            };
+            bt_sender_execute_burst(&check_cfg);
             bt_sender_start_check(2000); 
-            
         }
         else{
             // cmd,delay,hex_mask        

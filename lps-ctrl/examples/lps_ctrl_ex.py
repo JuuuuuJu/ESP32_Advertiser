@@ -8,7 +8,7 @@ def main():
                 cmd_input='LOAD',
                 delay_sec=1, 
                 prep_led_sec=1,
-                target_ids=[0, 1, 5],
+                target_ids=[],
                 data=[0, 0, 0],
             )
             print(f"{json.dumps(response, indent=4, ensure_ascii=False)}")
@@ -16,15 +16,15 @@ def main():
                 cmd_input='PLAY',
                 delay_sec=3, 
                 prep_led_sec=1,
-                target_ids=[0, 1, 5],
+                target_ids=[],
                 data=[0, 0, 0],
             )
             print(f"{json.dumps(response, indent=4, ensure_ascii=False)}")
             response = sender.send_burst(
                 cmd_input='PAUSE',
-                delay_sec=5, 
+                delay_sec=9, 
                 prep_led_sec=1,
-                target_ids=[0, 1, 5],
+                target_ids=[],
                 data=[0, 0, 0],
             )
             print(f"{json.dumps(response, indent=4, ensure_ascii=False)}")
