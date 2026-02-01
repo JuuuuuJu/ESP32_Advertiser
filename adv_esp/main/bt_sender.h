@@ -24,6 +24,6 @@ typedef struct {
     uint64_t target_mask;
     uint8_t data[3];
 } bt_sender_config_t;
-
-int bt_sender_execute_burst(const bt_sender_config_t *config);
+esp_err_t bt_sender_init(void);
+int bt_sender_add_task(const bt_sender_config_t *config);
 void bt_sender_start_check(uint32_t duration_ms);

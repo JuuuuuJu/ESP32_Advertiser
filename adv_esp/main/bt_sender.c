@@ -4,6 +4,7 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_bt.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
@@ -12,6 +13,7 @@
 #include "esp_rom_sys.h"
 
 #define TX_OFFSET_US 9000 // Estimated time offset for TX in microseconds based on empirical measurements
+#define MAX_ACTIVE_TASKS 4
 #ifndef HCI_GRP_HOST_CONT_BASEBAND_CMDS
 #define HCI_GRP_HOST_CONT_BASEBAND_CMDS (0x03 << 10)
 #endif
@@ -39,6 +41,14 @@ static int64_t t1_start = 0;
 static uint8_t hci_cmd_buf[128];
 static bool is_initialized = false;
 static bool is_checking = false;
+typedef struct {
+    bool active;
+    int64_t end_time_us;
+    bt_sender_config_t config;
+} active_task_t;
+static active_task_t s_tasks[MAX_ACTIVE_TASKS];
+static SemaphoreHandle_t s_task_mutex = NULL;
+static int s_rr_index = 0; // Round-Robin Index
 // Helper functions to send HCI commands
 static void hci_cmd_send_ble_set_adv_data(uint8_t cmd_type, uint32_t delay_us, uint32_t prep_led_us, uint64_t target_mask,const uint8_t *data) {
     uint8_t raw_adv_data[31];
@@ -156,6 +166,56 @@ static void hci_cmd_send_set_event_mask(void) {
     
     esp_vhci_host_send_packet(buf, 4 + 8);
 }
+static void broadcast_scheduler_task(void *arg) {
+    ESP_LOGI(TAG, "Broadcast Scheduler Started (20ms cycle)");
+    
+    while (1) {
+        if (is_checking) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+
+        int64_t now_us = esp_timer_get_time();
+        int active_count = 0;
+        int task_index_to_run = -1;
+
+        xSemaphoreTake(s_task_mutex, portMAX_DELAY);
+        for (int i = 0; i < MAX_ACTIVE_TASKS; i++) {
+            if (s_tasks[i].active) {
+                if (now_us >= s_tasks[i].end_time_us) {
+                    s_tasks[i].active = false;
+                } else {
+                    active_count++;
+                }
+            }
+        }
+        if (active_count > 0) {
+            for (int k = 0; k < MAX_ACTIVE_TASKS; k++) {
+                int idx = (s_rr_index + k) % MAX_ACTIVE_TASKS;
+                if (s_tasks[idx].active) {
+                    task_index_to_run = idx;
+                    s_rr_index = (idx + 1) % MAX_ACTIVE_TASKS;
+                    break;
+                }
+            }
+        }
+        xSemaphoreGive(s_task_mutex);
+        if (task_index_to_run != -1) {
+            active_task_t *t = &s_tasks[task_index_to_run];
+            int32_t remain = (int32_t)(t->end_time_us - now_us - TX_OFFSET_US);
+            if (remain < 0) remain = 0;
+
+            // Set Data -> Start -> Delay -> Stop
+            hci_cmd_send_ble_set_adv_data(t->config.cmd_type, remain, t->config.prep_led_us, t->config.target_mask, t->config.data);
+            esp_rom_delay_us(500); 
+            hci_cmd_send_ble_adv_start();
+            // advertise 10ms
+            vTaskDelay(pdMS_TO_TICKS(10)); 
+            hci_cmd_send_ble_adv_stop();
+        }
+        vTaskDelay(pdMS_TO_TICKS(10)); 
+    }
+}
 esp_err_t bt_sender_init(void) {
     if (is_initialized) return ESP_OK;
 
@@ -182,45 +242,34 @@ esp_err_t bt_sender_init(void) {
     hci_cmd_send_set_event_mask();
     hci_cmd_send_ble_set_adv_param();
     vTaskDelay(100 / portTICK_PERIOD_MS);
+    s_task_mutex = xSemaphoreCreateMutex();
+    for(int i=0; i<MAX_ACTIVE_TASKS; i++) s_tasks[i].active = false;
+    xTaskCreate(broadcast_scheduler_task, "bt_scheduler", 4096, NULL, 10, NULL);
 
     is_initialized = true;
     ESP_LOGI(TAG, "BT Sender API Initialized");
     return ESP_OK;
 }
-
-int bt_sender_execute_burst(const bt_sender_config_t *config) {
-    if (!is_initialized) {
-        ESP_LOGE(TAG, "Error: BT Sender not initialized! Call bt_sender_init() first.");
-        return 0;
+int bt_sender_add_task(const bt_sender_config_t *config) {
+    if (!is_initialized) return 0;
+    int slot = -1;
+    xSemaphoreTake(s_task_mutex, portMAX_DELAY);
+    for (int i = 0; i < MAX_ACTIVE_TASKS; i++) {
+        if (!s_tasks[i].active) {
+            slot = i;
+            break;
+        }
     }
-
-    int burst_count = config->delay_us / 20000;
-    if (burst_count > 20) burst_count = 20; // Cap burst count to 100 for safety
-    int64_t start_us = esp_timer_get_time();
-    int64_t target_us = start_us + config->delay_us;
-    
-
-    for (int i = 0; i < burst_count; i++) {
-        int64_t now_us = esp_timer_get_time();
-        int32_t remain_delay = (int32_t)(target_us - now_us - TX_OFFSET_US);
-        if (remain_delay < 0) remain_delay = 0;
-        
-        // 1. Set Advertising Data
-        hci_cmd_send_ble_set_adv_data(config->cmd_type, remain_delay, config->prep_led_us, config->target_mask,config->data);
-        esp_rom_delay_us(500);
-
-        // 2. Start Advertising
-        t1_start = esp_timer_get_time();
-        hci_cmd_send_ble_adv_start();
-        vTaskDelay(pdMS_TO_TICKS(10));
-
-        // 3. Stop Advertising
-        hci_cmd_send_ble_adv_stop();
-
-        vTaskDelay(pdMS_TO_TICKS(10));
+    if (slot != -1) {
+        s_tasks[slot].config = *config;
+        s_tasks[slot].end_time_us = esp_timer_get_time() + config->delay_us;
+        s_tasks[slot].active = true;
+        ESP_LOGD(TAG, "Task added to slot %d (Type 0x%02X)", slot, config->cmd_type);
+    } else {
+        ESP_LOGW(TAG, "Task List Full! Dropping CMD 0x%02X", config->cmd_type);
     }
-
-    return burst_count;
+    xSemaphoreGive(s_task_mutex);
+    return (slot != -1) ? 1 : 0;
 }
 void bt_sender_start_check(uint32_t duration_ms) {
     if (!is_initialized) return;

@@ -39,7 +39,8 @@ void process_byte(uint8_t c, int64_t t_wake, int64_t t_read_done) {
                 .target_mask = check_target_mask,
                 .data = {0, 0, 0}
             };
-            bt_sender_execute_burst(&check_cfg);
+            bt_sender_add_task(&check_cfg);
+            vTaskDelay(pdMS_TO_TICKS(600));
             bt_sender_start_check(2000); 
         }
         else{
@@ -71,7 +72,7 @@ void process_byte(uint8_t c, int64_t t_wake, int64_t t_read_done) {
                     .data[1]=(uint8_t)in_data[1],
                     .data[2]=(uint8_t)in_data[2]
                 };
-                bt_sender_execute_burst(&burst_cfg);
+                bt_sender_add_task(&burst_cfg);
                 // uart_write_bytes(UART_PORT_NUM, "DONE\n", 5);
             } else {
                 uart_write_bytes(UART_PORT_NUM, "NAK:ParseError\n", 15);
