@@ -13,7 +13,7 @@
 #include "esp_rom_sys.h"
 
 #define TX_OFFSET_US 9000 // Estimated time offset for TX in microseconds based on empirical measurements
-#define MAX_ACTIVE_TASKS 4
+#define MAX_ACTIVE_TASKS 16
 #ifndef HCI_GRP_HOST_CONT_BASEBAND_CMDS
 #define HCI_GRP_HOST_CONT_BASEBAND_CMDS (0x03 << 10)
 #endif
@@ -37,7 +37,6 @@
 #endif
 static const char *TAG = "BT_SENDER";
 static volatile int64_t last_measured_latency = 0;
-static int64_t t1_start = 0;
 static uint8_t hci_cmd_buf[128];
 static bool is_initialized = false;
 static bool is_checking = false;
@@ -58,7 +57,7 @@ static void hci_cmd_send_ble_set_adv_data(uint8_t cmd_type, uint32_t delay_us, u
     raw_adv_data[idx++] = 2; raw_adv_data[idx++] = 0x01; raw_adv_data[idx++] = 0x06;
     
     // Manufacturer Specific Data
-    raw_adv_data[idx++] = 20; // len
+    raw_adv_data[idx++] = 23; // len
     raw_adv_data[idx++] = 0xFF; raw_adv_data[idx++] = 0xFF; raw_adv_data[idx++] = 0xFF;
     raw_adv_data[idx++] = cmd_type;
 
@@ -167,7 +166,7 @@ static void hci_cmd_send_set_event_mask(void) {
     esp_vhci_host_send_packet(buf, 4 + 8);
 }
 static void broadcast_scheduler_task(void *arg) {
-    ESP_LOGI(TAG, "Broadcast Scheduler Started (20ms cycle)");
+    ESP_LOGD(TAG, "Broadcast Scheduler Started (20ms cycle)");
     
     while (1) {
         if (is_checking) {

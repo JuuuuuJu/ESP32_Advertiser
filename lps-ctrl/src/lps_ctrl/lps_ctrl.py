@@ -5,22 +5,20 @@ import json
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-cmd_list = [0]*16
-idx=-1
+
 class ESP32BTSender:
-    CMD_MAP = { "PLAY": 0x01, "PAUSE": 0x02,"RESET": 0x03, "RELEASE": 0x04,  "LOAD": 0x05,"TEST": 0x06,  "CANCEL": 0x07 }
-    STATE_MAP = {
-        0: "UNLOADED",
-        1: "READY",
-        2: "PLAYING",
-        3: "PAUSE",
-        4: "TEST"
-    }
+    CMD_MAP = { "PLAY": 0x01, "PAUSE": 0x02, "RESET": 0x03, "RELEASE": 0x04, "LOAD": 0x05, "TEST": 0x06, "CANCEL": 0x07, "CHECK": 0x08 }
+    STATE_MAP = { 0: "UNLOADED", 1: "READY", 2: "PLAYING", 3: "PAUSE", 4: "TEST" }
+
     def __init__(self, port, baud_rate=921600, timeout=10):
         self.port = port
         self.baud_rate = baud_rate
         self.timeout = timeout
         self.ser = None
+        
+        self.found_devices_buffer = [] 
+        self.cmd_list = [0] * 16 
+        self.idx = -1
 
     def connect(self):
         try:
@@ -38,20 +36,69 @@ class ESP32BTSender:
 
     def _format_response(self, status_code, cmd, target_ids, cmd_id, message):
         return {
-            "from": "Host_PC", # or "RPi"?
+            "from": "Host_PC",
             "topic": "command",
             "statusCode": status_code,
             "payload": {
-                "target_id": str(target_ids), # I don't know what to put in "MAC" 
+                "target_id": str(target_ids),
                 "command": str(cmd),
                 "command_id": str(cmd_id),
                 "message": message
             }
         }
-    
+
+    def _read_until_ack_or_timeout(self, expected_ack="ACK:OK", timeout=1.0):
+        start_time = time.time()
+        last_msg = ""
+        
+        while (time.time() - start_time) < timeout:
+            if self.ser.in_waiting > 0:
+                try:
+                    line = self.ser.read_until(b'\n').decode('utf-8', errors='ignore').strip()
+                    if not line:
+                        continue
+                    
+                    if expected_ack in line:
+                        return True, "Success"
+                    
+                    elif line.startswith("FOUND:"):
+                        self._parse_found_line(line)
+                    
+                    elif line == "CHECK_DONE":
+                        pass
+                        
+                    elif "NAK" in line:
+                        return False, f"Device rejected: {line}"
+                    
+                    else:
+                        last_msg = line
+                        
+                except Exception as e:
+                    return False, str(e)
+            else:
+                time.sleep(0.005) 
+                
+        return False, f"Timeout or Unexpected: {last_msg}"
+
+    def _parse_found_line(self, line):
+        try:
+            parts = line.replace("FOUND:", "").split(',')
+            if len(parts) >= 5:
+                state = self.STATE_MAP.get(int(parts[4]), "UNKNOWN")
+                packet = {
+                    "target_id": int(parts[0]),
+                    "cmd_id": int(parts[1]),
+                    "cmd_type": int(parts[2]),
+                    "target_delay": int(parts[3]),
+                    "state": state
+                }
+                if packet not in self.found_devices_buffer:
+                    self.found_devices_buffer.append(packet)
+        except Exception as e:
+            logger.error(f"Parse error: {e}")
+
     def send_burst(self, cmd_input, delay_sec, prep_led_sec, target_ids, data):
-        global idx, cmd_list
-        error_response = self._format_response(-1, cmd_input, target_ids, -1, "Port not open or initialization failed")
+        error_response = self._format_response(-1, cmd_input, target_ids, -1, "Port not open")
         if not self.ser or not self.ser.is_open:
             return error_response
 
@@ -63,105 +110,83 @@ class ESP32BTSender:
             target_mask = 0xFFFFFFFFFFFFFFFF
         else:
             for pid in target_ids:
-                if pid > 0:
-                    target_mask |= (1 << (pid - 1))
-        packet=""
+                if pid > 0: target_mask |= (1 << (pid - 1))
+        
         t_start_pc = time.perf_counter()
         target_time = t_start_pc + delay_sec
         add_cmd_fail = 1
         
         for i in range(16):
-            if cmd_list[i] < t_start_pc and i != idx:
-                cmd_list[i] = target_time
+            if self.cmd_list[i] < t_start_pc and i != self.idx:
+                self.cmd_list[i] = target_time
                 cmd_int = i * 16 + cmd_int
                 packet = f"{cmd_int},{delay_us},{prep_led_us},{target_mask:x},{data[0]},{data[1]},{data[2]}\n"
                 add_cmd_fail = 0
-                idx = i
+                self.idx = i
                 break 
+        
         logger.info(f"Sending: {packet.strip()}")
         if add_cmd_fail == 1:
-            msg = "Add command FAIL due to full pending number"
-            print(f"{msg}\n")
-            return self._format_response(-1, cmd_input, target_ids, idx, msg)
-        last_error_msg = "Unknown Error"
-        self.ser.reset_input_buffer()          
-        try:
-            self.ser.write(packet.encode('utf-8'))
-            raw_response = self.ser.read_until(b'\n')
-            line = raw_response.decode('utf-8', errors='ignore').strip()
-            if "ACK:OK" in line:
-                return self._format_response(0, cmd_input, target_ids, idx, "Success")
-            elif "NAK" in line:
-                last_error_msg = f"Device rejected: {line}"
-                logger.warning(last_error_msg)
-            else:
-                if not line:
-                    last_error_msg = "Timeout: No ACK received"
-                    logger.warning(last_error_msg)
-                else:
-                    last_error_msg = f"Unexpected response: {line}"
-                    logger.warning(last_error_msg)
-        except Exception as e:
-            last_error_msg = f"Exception: {str(e)}"
-            logger.error(last_error_msg)
+            return self._format_response(-1, cmd_input, target_ids, self.idx, "Queue full")
 
-        logger.error("Failed to send command.")
-        return self._format_response(-1, cmd_input, target_ids, idx, last_error_msg)
-    def check_status(self, target_ids=[]):
-        if not self.ser or not self.ser.is_open:
-            return {"statusCode": -1, "message": "Port not open"}
-        target_mask = 0
-        if not target_ids:
-            target_mask = 0xFFFFFFFFFFFFFFFF
-        else:
-            for pid in target_ids:
-                if pid > 0:
-                    target_mask |= (1 << (pid - 1))
-        logger.info("Sending CHECK command...")
-        self.ser.reset_input_buffer()
-        self.ser.write(f"CHECK,{target_mask:x}\n".encode())
-        try:
-            ack = self.ser.read_until(b'\n').decode().strip()
-            if "ACK:CHECK_START" not in ack:
-                logger.warning(f"Did not receive CHECK ACK. Got: {ack}")
-        except Exception as e:
-            logger.error(f"Error reading start ack: {e}")
-        found_packets = []
-        start_time = time.time()
+        self.ser.write(packet.encode('utf-8'))
         
-        while (time.time() - start_time) < 2.0:
-            line_bytes = self.ser.read_until(b'\n')
-            if not line_bytes:
-                continue
+        success, msg = self._read_until_ack_or_timeout(expected_ack="ACK:OK", timeout=0.5)
+        
+        status = 0 if success else -1
+        return self._format_response(status, cmd_input, target_ids, self.idx, msg)
+
+    def trigger_check(self, target_ids=[]):
+        if not self.ser or not self.ser.is_open:
+            return self._format_response(-1, "CHECK", target_ids, -1, "Port not open")
             
-            line = line_bytes.decode(errors='ignore').strip()
-            
-            if line == "CHECK_DONE":
-                # logger.info("Get CHECK_DONE\n")
-                break
-                
-            if line.startswith("FOUND:"):
-                parts = line.replace("FOUND:", "").split(',')
-                if len(parts) >= 5:
-                    state = self.STATE_MAP.get(int(parts[4]),"UNKNOWN")
-                    packet = {
-                        "target_id": int(parts[0]),
-                        "cmd_id": int(parts[1]),
-                        "cmd_type": int(parts[2]),
-                        "target_delay": int(parts[3]),
-                        "state": state
-                    }
-                    if packet not in found_packets:
-                        found_packets.append(packet)
+        resp = self.send_burst(
+                cmd_input='CHECK', 
+                delay_sec=0.6, 
+                prep_led_sec=0, 
+                target_ids=target_ids, 
+                data=[0, 0, 0]
+            )
+        if resp['statusCode'] != 0:
+            return resp
+        self.found_devices_buffer = []
+        cmd_id = resp['payload']['command_id']
+        return {
+            "from": "Host_PC",
+            "topic": "check_trigger",
+            "statusCode": 0,
+            "payload": {
+                "target_id": str(target_ids),
+                "command": "CHECK",
+                "command_id": str(cmd_id),
+                "message": f"Check started (ID: {cmd_id})"
+            }
+        }
+
+    def get_latest_report(self):
+        self._drain_serial()
+        
         return {
             "from": "Host_PC",
             "topic": "check_report",
             "statusCode": 0,
             "payload": {
                 "scan_duration_sec": 2,
-                "found_devices": found_packets
+                "found_count": len(self.found_devices_buffer),
+                "found_devices": self.found_devices_buffer
             }
         }
+
+    def _drain_serial(self):
+        if self.ser and self.ser.is_open:
+            while self.ser.in_waiting > 0:
+                try:
+                    line = self.ser.read_until(b'\n').decode('utf-8', errors='ignore').strip()
+                    if line.startswith("FOUND:"):
+                        self._parse_found_line(line)
+                except:
+                    break
+
     def __enter__(self):
         self.connect()
         return self

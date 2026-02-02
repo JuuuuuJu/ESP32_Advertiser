@@ -21,63 +21,47 @@ static char packet_buf[128];
 static int packet_idx = 0;
 
 static QueueHandle_t uart0_queue;
-
+void check_sequence_task(void *pvParameter) {
+    vTaskDelay(pdMS_TO_TICKS(600));
+    bt_sender_start_check(2000); 
+    vTaskDelete(NULL);
+}
 void process_byte(uint8_t c, int64_t t_wake, int64_t t_read_done) {
     if (c == '\n') {
-        packet_buf[packet_idx] = '\0';
-        if (strncmp(packet_buf, "CHECK", 5) == 0) {
-            unsigned long long check_target_mask = 0xFFFFFFFFFFFFFFFF;
-            char *p = strchr(packet_buf, ',');
-            if (p) {
-                check_target_mask = strtoull(p + 1, NULL, 16);
-            }
-            uart_write_bytes(UART_PORT_NUM, "ACK:CHECK_START\n", 16);
-            bt_sender_config_t check_cfg = {
-                .cmd_type = 0x08,
-                .delay_us = 600000,
-                .prep_led_us = 0,
-                .target_mask = check_target_mask,
-                .data = {0, 0, 0}
+        packet_buf[packet_idx] = '\0';       
+        int cmd_in = 0;
+        unsigned long delay_us = 0;
+        unsigned long prep_led_us = 0;
+        unsigned long long target_mask = 0;
+        int in_data[3];
+
+        int args = sscanf(packet_buf, "%d,%lu,%lu,%llx,%d,%d,%d", &cmd_in, &delay_us, &prep_led_us, &target_mask, &in_data[0], &in_data[1], &in_data[2]);
+
+        if (args == 7) {
+            int64_t t_parse_done = esp_timer_get_time();
+
+            int64_t d_read  = t_read_done - t_wake;
+            int64_t d_parse = t_parse_done - t_read_done;
+            int64_t d_total = t_parse_done - t_wake;
+
+            char ack_msg[64];
+            snprintf(ack_msg, sizeof(ack_msg), "ACK:OK:%lld:%lld:%lld\n", d_read, d_parse, d_total);
+            uart_write_bytes(UART_PORT_NUM, ack_msg, strlen(ack_msg));
+            bt_sender_config_t burst_cfg = {
+                .cmd_type = (uint8_t)cmd_in,
+                .delay_us = delay_us,
+                .prep_led_us = prep_led_us,
+                .target_mask = (uint64_t)target_mask,
+                .data[0]=(uint8_t)in_data[0],
+                .data[1]=(uint8_t)in_data[1],
+                .data[2]=(uint8_t)in_data[2]
             };
-            bt_sender_add_task(&check_cfg);
-            vTaskDelay(pdMS_TO_TICKS(600));
-            bt_sender_start_check(2000); 
-        }
-        else{
-            // cmd,delay,hex_mask        
-            int cmd_in = 0;
-            unsigned long delay_us = 0;
-            unsigned long prep_led_us = 0;
-            unsigned long long target_mask = 0;
-            int in_data[3];
-
-            int args = sscanf(packet_buf, "%d,%lu,%lu,%llx,%d,%d,%d", &cmd_in, &delay_us, &prep_led_us, &target_mask, &in_data[0], &in_data[1], &in_data[2]);
-
-            if (args == 7) {
-                int64_t t_parse_done = esp_timer_get_time();
-
-                int64_t d_read  = t_read_done - t_wake;
-                int64_t d_parse = t_parse_done - t_read_done;
-                int64_t d_total = t_parse_done - t_wake;
-
-                char ack_msg[64];
-                snprintf(ack_msg, sizeof(ack_msg), "ACK:OK:%lld:%lld:%lld\n", d_read, d_parse, d_total);
-                uart_write_bytes(UART_PORT_NUM, ack_msg, strlen(ack_msg));
-                bt_sender_config_t burst_cfg = {
-                    .cmd_type = (uint8_t)cmd_in,
-                    .delay_us = delay_us,
-                    .prep_led_us = prep_led_us,
-                    .target_mask = (uint64_t)target_mask,
-                    .data[0]=(uint8_t)in_data[0],
-                    .data[1]=(uint8_t)in_data[1],
-                    .data[2]=(uint8_t)in_data[2]
-                };
-                bt_sender_add_task(&burst_cfg);
-                // uart_write_bytes(UART_PORT_NUM, "DONE\n", 5);
-            } else {
-                uart_write_bytes(UART_PORT_NUM, "NAK:ParseError\n", 15);
+            bt_sender_add_task(&burst_cfg);
+            if ((cmd_in & 0x0F) == 0x08) {
+                xTaskCreate(check_sequence_task, "chk_seq", 4096, NULL, 10, NULL);
             }
-            
+        } else {
+            uart_write_bytes(UART_PORT_NUM, "NAK:ParseError\n", 15);
         }
         packet_idx = 0;
     } 
