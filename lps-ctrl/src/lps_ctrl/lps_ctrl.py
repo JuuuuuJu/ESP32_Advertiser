@@ -7,10 +7,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class ESP32BTSender:
-    CMD_MAP = { "PLAY": 0x01, "PAUSE": 0x02, "RESET": 0x03, "RELEASE": 0x04, "LOAD": 0x05, "TEST": 0x06, "CANCEL": 0x07, "CHECK": 0x08 }
+    CMD_MAP = { "PLAY": 0x01, "PAUSE": 0x02, "STOP": 0x03, "RELEASE": 0x04, "TEST": 0x05, "CANCEL": 0x06, "CHECK": 0x07 }
     STATE_MAP = { 0: "UNLOADED", 1: "READY", 2: "PLAYING", 3: "PAUSE", 4: "TEST" }
 
-    def __init__(self, port, baud_rate=921600, timeout=10):
+    def __init__(self, port, baud_rate=921600, timeout=1):
         self.port = port
         self.baud_rate = baud_rate
         self.timeout = timeout
@@ -106,7 +106,7 @@ class ESP32BTSender:
         delay_us = int(delay_sec * 1_000_000)
         prep_led_us = int(prep_led_sec * 1_000_000)
         target_mask = 0
-        if not target_ids:
+        if not target_ids or 0 in target_ids:
             target_mask = 0xFFFFFFFFFFFFFFFF
         else:
             for pid in target_ids:
