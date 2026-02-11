@@ -2,14 +2,48 @@
 
 This project configures the ESP32 as a BLE advertising sender. It receives text commands from a PC via UART and uses the Raw HCI interface to send BLE advertising packets containing precise countdown timers.
 
-## Introduction
+## System Internal Workflow
 
-The main workflow is as follows:
+This section explains the lifecycle of a command from the moment it leaves the PC until it is broadcasted over Bluetooth.
 
-1. **Receive Command (UART):** Receives text commands from the PC via USB Serial.
-2. **BLE Broadcasting (BLE Burst):** Uses the Raw HCI (Host Controller Interface) to directly control the Bluetooth controller to broadcast packets without establishing a connection.
-3. **Synchronized Countdown:** Continuously transmits a series of broadcast packets (Burst) within a specified delay time. These packets contain the "remaining time," allowing the receiver to synchronize actions precisely.
-4. **Status Checking:** Supports a hybrid `CHECK` command that first broadcasts a query signal, then switches to scanning mode to collect feedback from receivers.
+### 1. Data Ingestion (UART Layer)
+
+* **PC Side**: Sends a CSV formatted string ending with `\n` (e.g., `1,5000000,0,FFFF,0,0,0\n`).
+* **ESP32 ISR**: The `uart_event_task` receives the data via interrupt and passes it to `process_byte`.
+* **Buffering**: Characters are stored in `packet_buf` until a newline `\n` is detected.
+
+### 2. Parsing & Dispatch (Application Layer)
+
+* **Parsing**: `sscanf` extracts the 7 parameters (Cmd, Delay, Prep, Mask, Data[3]).
+* **Immediate ACK**: The ESP32 immediately sends `ACK:OK` back to the PC to confirm receipt.
+* **Task Creation**: A `bt_sender_config_t` struct is created, and `bt_sender_add_task()` is called.
+
+### 3. Scheduling (Sender Layer)
+
+* **Slot Allocation**: The scheduler looks for an empty slot in the `s_tasks[16]` array.
+* **Timestamping**: It calculates the **Absolute End Time**:
+`end_time_us = now_us + delay_us`
+* **Special Handling**:
+* If **CANCEL (0x06)** is received: It immediately removes the target task from the scheduler (`bt_sender_remove_task`).
+* If **CHECK (0x07)** is received: It spawns a `check_sequence_task` which waits 600ms (broadcast phase) before triggering the scan.
+
+
+
+### 4. Broadcasting (Round-Robin Loop)
+
+A dedicated FreeRTOS task `broadcast_scheduler_task` runs every **20ms**:
+
+1. **Check Mode**: If `is_checking` is true (Scanning), it skips broadcasting.
+2. **Cleanup**: Checks if any tasks have passed their `end_time_us`. If so, marks them inactive.
+3. **Selection**: Uses a **Round-Robin** algorithm to pick the *next* active task in the list (ensuring fair bandwidth for multiple concurrent commands).
+4. **Dynamic Calculation**: Calculates the fresh remaining time:
+`remain = end_time_us - now_us - TX_OFFSET_US`
+5. **HCI Transmission**: Sends the raw HCI packet to the Bluetooth Controller.
+* Broadcasting lasts for approx. 10ms.
+
+
+
+---
 
 ## Project Structure
 
@@ -18,23 +52,19 @@ The main workflow is as follows:
 │   ├── CMakeLists.txt      
 │   └── main/
 │       ├── CMakeLists.txt  
-│       ├── main.c          # UART handling, command parsing, task scheduling
-│       ├── bt_sender.c     # BLE HCI control, packet assembly
-│       └── bt_sender.h     # Header file
-
+│       ├── main.c          # UART parsing, ACK sending, Task creation
+│       ├── bt_sender.c     # HCI commands, Round-Robin Scheduler, Scanning logic
+│       └── bt_sender.h     # Data structures
 ```
 
 ## UART Protocol
 
-UART settings are as follows:
-
 * **Baud Rate**: `921600`
 * **Data bits**: 8, **Stop bits**: 1, **Parity**: None
-* **Flow Control**: Disable
 
 ### 1. Command Format (PC -> ESP32)
 
-**All commands**, including `CHECK`, use the following CSV format. The Python script (`lps_ctrl.py`) handles this formatting automatically.
+Commands must be sent as a CSV string terminated by a newline `\n`.
 
 ```text
 cmd_in,delay_us,prep_led_us,target_mask,in_data[0],in_data[1],in_data[2]
@@ -42,91 +72,66 @@ cmd_in,delay_us,prep_led_us,target_mask,in_data[0],in_data[1],in_data[2]
 
 | Parameter | Type | Description |
 | --- | --- | --- |
-| **cmd_in** | `int` | Combined value of Command ID and Command Type. Format: `(Command_ID << 4)` |
-| **delay_us** | `unsigned long` | Execution delay (us). For `CHECK`, this defines the broadcast duration (e.g., 600000us). |
-| **prep_led_us** | `unsigned long` | Duration for the preparation LED (us). |
-| **target_mask** | `unsigned long long` | Bitmask for target IDs. E.g., `5` represents `00...0101` (ID 0 & 2). |
-| **in_data[0]** | `int` | Data 0 (Red value / Command ID). |
-| **in_data[1]** | `int` | Data 1 (Green value). |
-| **in_data[2]** | `int` | Data 2 (Blue value). |
+| **cmd_in** | `int` | 4 bits Command_ID + 4 bits command type |
+| **delay_us** | `long` | Execution delay in microseconds. |
+| **prep_led_us** | `long` | Preparation LED duration. |
+| **target_mask** | `hex` | 64-bit mask. |
+| **in_data[0-2]** | `int` | Payload data (R, G, B or Target ID for Cancel). |
 
 #### Supported Command Types (Low 4 bits of `cmd_in`)
 
-| Command | Type Code | Description | Data Parameters |
+| Command | Hex Code | Description | Data Parameter Usage |
 | --- | --- | --- | --- |
-| **PLAY** | 0x01 | Start playback | `[0, 0, 0]` |
-| **PAUSE** | 0x02 | Pause playback | `[0, 0, 0]` |
-| **RESET** | 0x03 | Reset timeline | `[0, 0, 0]` |
-| **RELEASE** | 0x04 | Enter `UNLOAD` state | `[0, 0, 0]` |
-| **LOAD** | 0x05 | Enter `READY` state | `[0, 0, 0]` |
-| **TEST** | 0x06 | Change LED color | `[R, G, B]` (0-255), `[0, 0, 0]` for playing pattern |
-| **CANCEL** | 0x07 | Cancel specific command | `[cmd_id, 0, 0]` |
-| **CHECK** | **0x08** | **Trigger Check Sequence** | `[0, 0, 0]` |
+| **PLAY** | `0x01` | Start timeline/playback. | `[0, 0, 0]` |
+| **PAUSE** | `0x02` | Pause playback. | `[0, 0, 0]` |
+| **STOP** | `0x03` | Stop and reset position. | `[0, 0, 0]` |
+| **RELEASE** | `0x04` | Release memory/Unload. | `[0, 0, 0]` |
+| **TEST** | `0x05` | Test Mode / LED Color. | `[R, G, B]` (0-255) or `[0,0,0]` for default pattern. |
+| **CANCEL** | `0x06` | Cancel a pending command. | `[cmd_id, 0, 0]` (Use the ID returned by send_burst) |
+| **CHECK** | `0x07` | Trigger Broadcast+Scan | `[0, 0, 0]` |
 
 ### 2. Response Format (ESP32 -> PC)
 
-#### Successful Receipt (ACK)
-
-When **ANY** command (including `CHECK`) is parsed and added to the scheduler, the ESP32 returns:
-
-```text
-ACK:OK:<read_latency>:<parse_latency>:<total_latency>
-```
-
-* Data units are in microseconds (us), used for latency profiling.
-
-#### Error (NAK)
-
-* `NAK:ParseError`: Insufficient parameters or incorrect format.
-* `NAK:Overflow`: Receive buffer overflow.
-
-### 3. Check Status Workflow
-
-The `CHECK` command (Type 0x08) initiates a specific sequence on the ESP32:
-
-1. **Broadcast Phase (approx. 600ms):** The ESP32 broadcasts the `CHECK` signal so receivers know to report back. This phase runs in parallel with other commands in the scheduler.
-2. **Scan Phase (approx. 2000ms):**
-The ESP32 stops broadcasting and enables the RX scanner to listen for ACKs from receivers.
-
-**PC Report Format (Streaming):**
-
-During the Scan Phase, when a valid ACK is received, the ESP32 streams the following line immediately:
-
-```text
-FOUND:<target_id>,<cmd_id>,<cmd_type>,<delay>,<state>
-```
-
-| Field | Description |
-| --- | --- |
-| `target_id` | The ID of the Receiver device. |
-| `cmd_id` | The ID of the command currently **locked/executing** on the receiver. |
-| `cmd_type` | The Type of the command currently locked on the receiver (e.g., 1 for PLAY). |
-| `delay` | The remaining time (us) calculated by the receiver. |
-| `state` | The current FSM state of the Player (e.g., 0=UNLOADED, 1=READY, 2=PLAYING). |
-
-**Completion:**
-
-When the scan duration ends, the ESP32 sends:
-
-```text
-CHECK_DONE
-```
+* **ACK**: `ACK:OK\n` (Sent immediately upon valid parse).
+* **NAK**: `NAK:ParseError\n` or `NAK:Overflow\n`.
+* **Check Result**: `FOUND:<target_id>,<cmd_id>,<cmd_type>,<delay>,<state>\n` (Streamed during scan).
+* **Check End**: `CHECK_DONE\n`.
 
 ## BLE Advertising Packet Structure
 
-The packet content is placed in the Manufacturer Specific Data section.
+The packet is constructed in `hci_cmd_send_ble_set_adv_data`. It uses Manufacturer Specific Data (0xFF).
 
-| Byte | Content | Description |
-| --- | --- | --- |
-| 0-2 | `0xFFFF` | Company ID (Reserved) |
-| 3 | `cmd` | **High 4-bit**: Command ID. **Low 4-bit**: Command Type |
-| 4-11 | `target_mask` | 8 Bytes, supports IDs 0~63 |
-| 12-15 | `delay_us` | Remaining delay time (microseconds) |
-| 16-19 | `prep_led_us` | Preparation time (microseconds) |
-| 20-22 | `data[3]` | R, G, B or other parameters |
+| Offset | Length | Value | Description |
+| --- | --- | --- | --- |
+| **0** | 3 | `0xFF, 0xFF, 0xFF` | Manufacturer ID / Padding |
+| **3** | 1 | `cmd_type` | Command Type |
+| **4** | 8 | `target_mask` | 64-bit Target Mask |
+| **12** | 4 | `delay_us` | **Dynamic** Remaining Time (Big Endian) |
+| **16** | 4 | `prep_led_us` | Preparation Time (Big Endian) |
+| **20** | 3 | `data[3]` | Extra Data (e.g., RGB) |
 
-## Notes
+**Total Length**: 23 Bytes of Manufacturer Data.
 
-1. **Latency Compensation**: There is a built-in `TX_OFFSET_US` (default 9000us) to compensate for the hardware delay between sending the command and the actual wireless transmission.
-2. **Task Scheduling**: The Sender uses a Round-Robin scheduler to interleave multiple active commands (e.g., broadcasting `PLAY` and `CHECK` simultaneously during the broadcast phase).
-3. **Check Limitation**: During the **Scan Phase** (2 seconds), the Sender **cannot broadcast**. Any commands sent from the PC during this time will be queued and broadcasted after the scan finishes.
+## Operating Principles
+
+### Round-Robin Scheduler
+
+The sender maintains a list of up to **16 active tasks**.
+
+* It does **not** broadcast all tasks simultaneously.
+* Every **20ms**, it selects the *next* task in the list to broadcast.
+* This allows the sender to handle multiple pending commands (e.g., a `PAUSE` for device A and a `PLAY` for device B) by interleaving their packets.
+
+### The Check Sequence (Hybrid Mode)
+
+When `CHECK` (0x07) is received:
+
+1. **Broadcast Phase (600ms)**: The ESP32 adds the CHECK command to the scheduler. Receivers wake up and prepare to ACK.
+2. **Scan Phase (2000ms)**:
+* The ESP32 **stops** all advertising (Radio Blind Spot).
+* It switches the HCI Controller to **Scan Mode**.
+* It listens for packets with Type `0x07` (ACK) from receivers.
+* Any `FOUND` devices are reported via UART.
+
+
+3. **Resume**: After 2s, scanning stops, and the scheduler resumes broadcasting any remaining tasks.
