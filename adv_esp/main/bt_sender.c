@@ -130,8 +130,8 @@ static int host_rcv_pkt(uint8_t *data, uint16_t len) {
 
             if(ad_type == 0xFF && ad_len >= 8) { // Manuf Data
                  if(adv_data[offset] == 0xFF && adv_data[offset + 1] == 0xFF) {
-                     // Check Type == 0x08 (ACK)
-                     if (adv_data[offset+2] == 0x08) {
+                     // Check Type == 0x07 (ACK)
+                     if (adv_data[offset+2] == 0x07) {
                          uint8_t target_id = adv_data[offset+3];
                          uint8_t cmd_id    = adv_data[offset+4];
                          uint8_t cmd_type  = adv_data[offset+5];
@@ -294,4 +294,14 @@ void bt_sender_start_check(uint32_t duration_ms) {
 
     is_checking = false;
     printf("CHECK_DONE\n");
+}
+void bt_sender_remove_task(int slot_idx) {
+    if (slot_idx >= 0 && slot_idx < MAX_ACTIVE_TASKS) {
+        xSemaphoreTake(s_task_mutex, portMAX_DELAY);
+        if (s_tasks[slot_idx].active) {
+            s_tasks[slot_idx].active = false;
+            ESP_LOGD(TAG, "Sender: Stopped broadcasting Task Slot %d", slot_idx);
+        }
+        xSemaphoreGive(s_task_mutex);
+    }
 }

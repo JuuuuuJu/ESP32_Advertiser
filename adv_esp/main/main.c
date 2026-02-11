@@ -38,7 +38,6 @@ void process_byte(uint8_t c, int64_t t_wake, int64_t t_read_done) {
         int args = sscanf(packet_buf, "%d,%lu,%lu,%llx,%d,%d,%d", &cmd_in, &delay_us, &prep_led_us, &target_mask, &in_data[0], &in_data[1], &in_data[2]);
 
         if (args == 7) {
-            int64_t t_parse_done = esp_timer_get_time();
             char ack_msg[64];
             snprintf(ack_msg, sizeof(ack_msg), "ACK:OK\n");
             uart_write_bytes(UART_PORT_NUM, ack_msg, strlen(ack_msg));
@@ -52,7 +51,11 @@ void process_byte(uint8_t c, int64_t t_wake, int64_t t_read_done) {
                 .data[2]=(uint8_t)in_data[2]
             };
             bt_sender_add_task(&burst_cfg);
-            if ((cmd_in & 0x0F) == 0x08) {
+            if ((cmd_in & 0x0F) == 0x06) {
+                int target_cmd_id = in_data[0];
+                bt_sender_remove_task(target_cmd_id);
+            }
+            if ((cmd_in & 0x0F) == 0x07) {
                 xTaskCreate(check_sequence_task, "chk_seq", 4096, NULL, 10, NULL);
             }
         } else {

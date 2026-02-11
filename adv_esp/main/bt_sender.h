@@ -27,3 +27,4 @@ typedef struct {
 esp_err_t bt_sender_init(void);
 int bt_sender_add_task(const bt_sender_config_t *config);
 void bt_sender_start_check(uint32_t duration_ms);
+void bt_sender_remove_task(int slot_idx);
