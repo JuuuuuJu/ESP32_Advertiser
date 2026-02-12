@@ -110,7 +110,7 @@ class ESP32BTSender:
             target_mask = 0xFFFFFFFFFFFFFFFF
         else:
             for pid in target_ids:
-                if pid > 0: target_mask |= (1 << (pid - 1))
+                if pid > 0: target_mask |= (1 << pid)
         
         t_start_pc = time.perf_counter()
         target_time = t_start_pc + delay_sec
