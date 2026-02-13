@@ -10,7 +10,7 @@ class ESP32BTSender:
     CMD_MAP = { "PLAY": 0x01, "PAUSE": 0x02, "STOP": 0x03, "RELEASE": 0x04, "TEST": 0x05, "CANCEL": 0x06, "CHECK": 0x07 }
     STATE_MAP = { 0: "UNLOADED", 1: "READY", 2: "PLAYING", 3: "PAUSE", 4: "TEST" }
 
-    def __init__(self, port, baud_rate=921600, timeout=1):
+    def __init__(self, port, baud_rate=115200, timeout=1):
         self.port = port
         self.baud_rate = baud_rate
         self.timeout = timeout

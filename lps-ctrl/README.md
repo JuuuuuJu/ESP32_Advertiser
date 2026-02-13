@@ -59,11 +59,11 @@ sequenceDiagram
 ### Class: `ESP32BTSender`
 
 ```python
-__init__(port, baud_rate=921600, timeout=1)
+__init__(port, baud_rate=115200, timeout=1)
 ```
 
 * **port** (Required): Serial port name (e.g., `'COM3'` on Windows or `'/dev/ttyS3'` on Linux).
-* **baud_rate**: Default is `921600`. Must match the `main.c` setting in the firmware.
+* **baud_rate**: Default is `115200`. Must match the `main.c` setting in the firmware.
 * **timeout**: Default is `1` second.
 
 ### Method: `send_burst`

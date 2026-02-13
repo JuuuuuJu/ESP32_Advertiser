@@ -29,7 +29,7 @@ graph TD
 
 2. **Hardware Bridge Layer (`adv_esp`)**
 
-* Receives PC commands via UART (baud rate: 921600).
+* Receives PC commands via UART (baud rate: 115200).
 * **Hybrid Role**: Acts primarily as a Broadcaster, but switches to **Observer (Scanner) Mode** when a `CHECK` command is issued.
 * Utilizes **Raw HCI** to bypass the standard Bluetooth stack for precise timing control.
 

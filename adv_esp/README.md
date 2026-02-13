@@ -59,7 +59,7 @@ A dedicated FreeRTOS task `broadcast_scheduler_task` runs every **20ms**:
 
 ## UART Protocol
 
-* **Baud Rate**: `921600`
+* **Baud Rate**: `115200`
 * **Data bits**: 8, **Stop bits**: 1, **Parity**: None
 
 ### 1. Command Format (PC -> ESP32)
