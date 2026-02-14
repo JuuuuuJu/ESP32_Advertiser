@@ -80,7 +80,7 @@ send_burst(cmd_input, delay_sec, prep_led_sec, target_ids, data)
 | --- | --- | --- |
 | **cmd_input** | `str` | Command type (see Mapping Table below). |
 | **delay_sec** | `float` | Time in seconds before the command executes. **Must be > 1.0s**. |
-| **prep_led_sec** | `float` | Duration for the "Preparation LED" effect. |
+| **prep_led_sec** | `float` | Duration for the "Preparation LED" effect. **Must be > 1.0s**. |
 | **target_ids** | `list[int]` | List of Target IDs (e.g., `[1, 2]`). Use `[0]` for **Broadcast All**. |
 | **data** | `list[int]` | list of 3 integers `[d0, d1, d2]` for extra parameters. |
 
@@ -95,11 +95,14 @@ The following commands are supported by the firmware:
 | **STOP** | `0x03` | Stop and reset position. | `[0, 0, 0]` |
 | **RELEASE** | `0x04` | Release memory/Unload. | `[0, 0, 0]` |
 | **TEST** | `0x05` | Test Mode / LED Color. | `[R, G, B]` (0-255) or `[0,0,0]` for default pattern. |
-| **CANCEL** | `0x06` | Cancel a pending command. | `[cmd_id, 0, 0]` (Use the ID returned by send_burst) |
+| **CANCEL** | `0x06` | Cancel a pending command. | `[cmd_id, 0, 0]` (Use the ID returned by send_burst). |
+| **UPLOAD** | `0x08` | Enter System Upload Mode. | `[0, 0, 0]`|
+| **RESET** | `0x09` | System Reboot. | `[0, 0, 0]` |
+* **NOTE:** **CHECK(0x07)** is called by `trigger_check`.
 
 #### Return Value
 
-Returns a dictionary containing the `command_id` assigned by the ESP32:
+Returns a dictionary containing the `command_id` assigned by the ESP32 (or a `-1` statusCode if it fails, such as when the Queue is full):
 
 ```json
 {
@@ -179,92 +182,4 @@ Run the example script to see the flow of scheduling commands and checking statu
 
 ```bash
 python .\examples\lps_ctrl_ex.py
-```
-Return json:
-
-```json
-{
-    "from": "Host_PC",
-    "topic": "command",
-    "statusCode": 0,
-    "payload": {
-        "target_id": "[]",
-        "command": "PLAY",
-        "command_id": "0",
-        "message": "Success"
-    }
-}
-{
-    "from": "Host_PC",
-    "topic": "command",
-    "statusCode": 0,
-    "payload": {
-        "target_id": "[]",
-        "command": "PAUSE",
-        "command_id": "1",
-        "message": "Success"
-    }
-}
-{
-    "from": "Host_PC",
-    "topic": "command",
-    "statusCode": 0,
-    "payload": {
-        "target_id": "[]",
-        "command": "CANCEL",
-        "command_id": "2",
-        "message": "Success"
-    }
-}
-{
-    "from": "Host_PC",
-    "topic": "check_trigger",
-    "statusCode": 0,
-    "payload": {
-        "target_id": "[]",
-        "command": "CHECK",
-        "command_id": "3",
-        "message": "Check started (ID: 3)"
-    }
-}
-{
-    "from": "Host_PC",
-    "topic": "command",
-    "statusCode": 0,
-    "payload": {
-        "target_id": "[]",
-        "command": "STOP",
-        "command_id": "4",
-        "message": "Success"
-    }
-}
-{
-    "from": "Host_PC",
-    "topic": "command",
-    "statusCode": 0,
-    "payload": {
-        "target_id": "[]",
-        "command": "TEST",
-        "command_id": "5",
-        "message": "Success"
-    }
-}
-{
-    "from": "Host_PC",
-    "topic": "check_report",
-    "statusCode": 0,
-    "payload": {
-        "scan_duration_sec": 2,
-        "found_count": 1,
-        "found_devices": [
-            {
-                "target_id": 1,
-                "cmd_id": 4,
-                "cmd_type": 3,
-                "target_delay": 5405590,
-                "state": "READY"
-            }
-        ]
-    }
-}
 ```

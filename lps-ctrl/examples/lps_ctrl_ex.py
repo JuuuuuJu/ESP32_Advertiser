@@ -33,6 +33,9 @@ def main():
             response = sender.send_burst(cmd_input='TEST', delay_sec=15.0, prep_led_sec=0, target_ids=[], data=[0,0,0])
             print(f"{json.dumps(response, indent=4, ensure_ascii=False)}")
 
+            response = sender.send_burst(cmd_input='UPLOAD', delay_sec=16.0, prep_led_sec=0, target_ids=[], data=[0,0,0])
+            print(f"{json.dumps(response, indent=4, ensure_ascii=False)}")
+            
             # Waits for the 2s scan window to finish, then fetches the aggregated report.
             time.sleep(2)            
             report = sender.get_latest_report()

@@ -89,6 +89,8 @@ cmd_in,delay_us,prep_led_us,target_mask,in_data[0],in_data[1],in_data[2]
 | **TEST** | `0x05` | Test Mode / LED Color. | `[R, G, B]` (0-255) or `[0,0,0]` for default pattern. |
 | **CANCEL** | `0x06` | Cancel a pending command. | `[cmd_id, 0, 0]` (Use the ID returned by send_burst) |
 | **CHECK** | `0x07` | Trigger Broadcast+Scan | `[0, 0, 0]` |
+| **UPLOAD** | `0x08` | Enter System Upload Mode. | `[0, 0, 0]`|
+| **RESET** | `0x09` | System Reboot. | `[0, 0, 0]` |
 
 ### 2. Response Format (ESP32 -> PC)
 

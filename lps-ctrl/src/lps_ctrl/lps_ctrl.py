@@ -7,7 +7,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class ESP32BTSender:
-    CMD_MAP = { "PLAY": 0x01, "PAUSE": 0x02, "STOP": 0x03, "RELEASE": 0x04, "TEST": 0x05, "CANCEL": 0x06, "CHECK": 0x07 }
+    CMD_MAP = { "PLAY": 0x01, "PAUSE": 0x02, "STOP": 0x03, "RELEASE": 0x04, "TEST": 0x05, "CANCEL": 0x06, "CHECK": 0x07, "UPLOAD": 0x08, "RESET": 0x09}
     STATE_MAP = { 0: "UNLOADED", 1: "READY", 2: "PLAYING", 3: "PAUSE", 4: "TEST" }
 
     def __init__(self, port, baud_rate=115200, timeout=1):
@@ -115,7 +115,7 @@ class ESP32BTSender:
         t_start_pc = time.perf_counter()
         target_time = t_start_pc + delay_sec
         add_cmd_fail = 1
-        
+        packet = ""
         for i in range(16):
             if self.cmd_list[i] < t_start_pc and i != self.idx:
                 self.cmd_list[i] = target_time
@@ -124,11 +124,9 @@ class ESP32BTSender:
                 add_cmd_fail = 0
                 self.idx = i
                 break 
-        
-        logger.info(f"Sending: {packet.strip()}")
         if add_cmd_fail == 1:
             return self._format_response(-1, cmd_input, target_ids, self.idx, "Queue full")
-
+        logger.info(f"Sending: {packet.strip()}")
         self.ser.write(packet.encode('utf-8'))
         
         success, msg = self._read_until_ack_or_timeout(expected_ack="ACK:OK", timeout=0.5)
