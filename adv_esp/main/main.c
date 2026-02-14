@@ -38,8 +38,13 @@ void process_byte(uint8_t c, int64_t t_wake, int64_t t_read_done) {
         int args = sscanf(packet_buf, "%d,%lu,%lu,%llx,%d,%d,%d", &cmd_in, &delay_us, &prep_led_us, &target_mask, &in_data[0], &in_data[1], &in_data[2]);
 
         if (args == 7) {
+            int64_t t_parse_done = esp_timer_get_time();
+            int64_t d_read  = t_read_done - t_wake;
+            int64_t d_parse = t_parse_done - t_read_done;
+            int64_t d_total = t_parse_done - t_wake;
             char ack_msg[64];
-            snprintf(ack_msg, sizeof(ack_msg), "ACK:OK\n");
+            // snprintf(ack_msg, sizeof(ack_msg), "ACK:OK\n");
+            snprintf(ack_msg, sizeof(ack_msg), "ACK:OK:%lld:%lld:%lld\n", d_read, d_parse, d_total);
             uart_write_bytes(UART_PORT_NUM, ack_msg, strlen(ack_msg));
             bt_sender_config_t burst_cfg = {
                 .cmd_type = (uint8_t)cmd_in,

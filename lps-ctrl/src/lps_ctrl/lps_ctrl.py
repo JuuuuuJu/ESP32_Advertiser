@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 class ESP32BTSender:
     CMD_MAP = { "PLAY": 0x01, "PAUSE": 0x02, "STOP": 0x03, "RELEASE": 0x04, "TEST": 0x05, "CANCEL": 0x06, "CHECK": 0x07 }
     STATE_MAP = { 0: "UNLOADED", 1: "READY", 2: "PLAYING", 3: "PAUSE", 4: "TEST" }
-
+    esp_latency=0
     def __init__(self, port, baud_rate=115200, timeout=1):
         self.port = port
         self.baud_rate = baud_rate
@@ -59,7 +59,9 @@ class ESP32BTSender:
                         continue
                     
                     if expected_ack in line:
-                        return True, "Success"
+                        parts = line.split(':')
+                        esp_latency=float(parts[4])
+                        return True, "Success", esp_latency
                     
                     elif line.startswith("FOUND:"):
                         self._parse_found_line(line)
@@ -125,14 +127,17 @@ class ESP32BTSender:
                 self.idx = i
                 break 
         
-        logger.info(f"Sending: {packet.strip()}")
+        # logger.info(f"Sending: {packet.strip()}")
         if add_cmd_fail == 1:
             return self._format_response(-1, cmd_input, target_ids, self.idx, "Queue full")
-
+        t0 = time.perf_counter()
         self.ser.write(packet.encode('utf-8'))
         
-        success, msg = self._read_until_ack_or_timeout(expected_ack="ACK:OK", timeout=0.5)
-        
+        success, msg, esp_lat = self._read_until_ack_or_timeout(expected_ack="ACK:OK", timeout=0.5)
+        t1 = time.perf_counter()
+        rtt_ms = (t1 - t0) * 1000
+        one_way_latency = (rtt_ms - esp_lat/1000.0) / 2
+        print(f"{one_way_latency:.2f}")
         status = 0 if success else -1
         return self._format_response(status, cmd_input, target_ids, self.idx, msg)
 
