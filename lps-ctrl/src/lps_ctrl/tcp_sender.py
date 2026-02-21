@@ -2,96 +2,102 @@ import asyncio
 import struct
 import os
 import socket
-import time
 
 class Esp32TcpServer:
-    def __init__(self, control_file_path, frame_file_path, host='0.0.0.0', port=3333):
+    def __init__(self, control_paths_list, frame_paths_list, host='0.0.0.0', port=3333):
         """
-        Initialize the Async TCP Server settings.
-        Requires control_file_path and frame_file_path.
+        初始化非同步 TCP 伺服器設定。
         """
         self.host = host
         self.port = port
-        self.control_file_path = control_file_path
-        self.frame_file_path = frame_file_path
+        self.control_paths_list = control_paths_list
+        self.frame_paths_list = frame_paths_list
         self.server = None
 
     def _get_file_data(self, filepath):
         """
-        Read file data. If the file or directory doesn't exist, create it with dummy data.
+        讀取檔案資料。
         """
         if not os.path.exists(filepath):
-            print(f"Error: File not found {filepath}")
-            
-            # Ensure the directory exists
-            dir_name = os.path.dirname(filepath)
-            if dir_name:
-                os.makedirs(dir_name, exist_ok=True)
-                
-            # Create a fake test file
-            with open(filepath, 'wb') as f:
-                filename = os.path.basename(filepath)
-                f.write(b'This is a test data for ' + filename.encode())
-            print(f"Auto-created test file: {filepath}")
+            # 拋出異常，交給外層的 handle_client 處理
+            raise FileNotFoundError(f"找不到檔案: {filepath}")
         
         with open(filepath, 'rb') as f:
             return f.read()
 
     async def handle_client(self, reader, writer):
         """
-        This coroutine is spawned for every new ESP32 connection.
+        處理每個 ESP32 連線的獨立非同步任務。
         """
         addr = writer.get_extra_info('peername')
         print(f"Connection successful! From: {addr}")
 
         try:
-            # 1. Receive Player ID (async read)
+            # 1. 接收 Player ID
             player_id_data = await reader.read(1024)
             if not player_id_data:
                 print("No data received, disconnecting.")
                 return
             
-            player_id = player_id_data.decode('utf-8').strip()
-            print(f"Received Player ID: {player_id}")
+            player_id_str = player_id_data.decode('utf-8').strip()
+            print(f"Received Player ID: {player_id_str}")
 
-            # Prepare file data
-            control_data = self._get_file_data(self.control_file_path)
-            frame_data = self._get_file_data(self.frame_file_path)
+            try:
+                pid = int(player_id_str)
+                idx = pid - 1
+            except ValueError:
+                print(f"Error: Invalid Player ID format '{player_id_str}'")
+                return
 
-            # 2. Send control file
-            print(f"Sending Control data ({len(control_data)} bytes)...")
+            # 檢查 ID 是否超出陣列範圍
+            if idx < 0 or idx >= len(self.control_paths_list) or idx >= len(self.frame_paths_list):
+                print(f"Error: Player ID {pid} is out of bounds (Max: {len(self.control_paths_list)}).")
+                return
+
+            player_control_path = self.control_paths_list[idx]
+            player_frame_path = self.frame_paths_list[idx]
+
+            # --- 嘗試讀取檔案 ---
+            try:
+                control_data = self._get_file_data(player_control_path)
+                frame_data = self._get_file_data(player_frame_path)
+            except FileNotFoundError as e:
+                # 發現檔案遺失，印出醒目錯誤並提早結束這個任務 (return)
+                print(f"Incomplete data for Player {pid}: {e}")
+                print(f"Disconnected Player {pid} to preserve existing SD card data.")
+                return 
+
+            # 2. 發送 control 檔案
+            print(f"Sending Control data ({len(control_data)} bytes) to Player {pid}...")
             size_header = struct.pack('>I', len(control_data))
             writer.write(size_header)
             writer.write(control_data)
-            await writer.drain() # Yield control back to event loop until buffer is drained
+            await writer.drain() 
             
-            await asyncio.sleep(0.1) # Replaces time.sleep()
+            await asyncio.sleep(0.1) 
 
-            # 3. Send frame file
-            print(f"Sending Frame data ({len(frame_data)} bytes)...")
+            # 3. 發送 frame 檔案
+            print(f"Sending Frame data ({len(frame_data)} bytes) to Player {pid}...")
             size_header = struct.pack('>I', len(frame_data))
             writer.write(size_header)
             writer.write(frame_data)
             await writer.drain()
 
-            # 4. 等待 Client 傳回完成訊息
-            print(f"等待 Player {player_id} 回傳確認中...")
+            # 4. 等待 ESP32 回傳 ACK 確認
+            print(f"Waiting for Player {pid} to save to SD card and send ACK...")
             try:
-                # 如果 ESP32 成功回傳，就會立即收到；若超時則拋出異常
-                ack_data = await asyncio.wait_for(reader.read(1024), timeout=100.0)
-                
+                ack_data = await asyncio.wait_for(reader.read(1024), timeout=15.0)
                 if ack_data:
                     ack_msg = ack_data.decode('utf-8').strip()
                     if ack_msg == "DONE":
-                        print(f"Player {player_id} saved files successfully.")
+                        print(f"Player {pid} successfully received and saved all files!")
                     else:
-                        print(f"Player {player_id} unknown message: {ack_msg}.")
+                        print(f"Received unknown message from Player {pid}: {ack_msg}")
                 else:
-                    print(f"No ACK from Player {player_id}")
+                    print(f"Connection closed early, Player {pid} did not send ACK.")
                     
             except asyncio.TimeoutError:
-                print(f"Player {player_id} ACK timeout.")
-            # -------------------------
+                print(f"ACK timeout! Player {pid} might have failed to save or disconnected.")
 
         except Exception as e:
             print(f"Error during transmission: {e}")
@@ -103,7 +109,7 @@ class Esp32TcpServer:
 
     async def start(self):
         """
-        Start the server and begin listening for connections asynchronously.
+        啟動非同步伺服器
         """
         self.server = await asyncio.start_server(
             self.handle_client, self.host, self.port
@@ -115,10 +121,8 @@ class Esp32TcpServer:
         print(f"Async TCP Server Starting...")
         print(f"Listening on Port: {self.port}")
         print(f"Local IP (for reference): {local_ip}")
-        print(f"Control file path: {self.control_file_path}")
-        print(f"Frame file path: {self.frame_file_path}")
+        print(f"Loaded {len(self.control_paths_list)} control paths and {len(self.frame_paths_list)} frame paths.")
         print(f"========================================")
 
-        # Serve forever in the async event loop
         async with self.server:
             await self.server.serve_forever()
