@@ -33,6 +33,7 @@ def main():
             response = sender.send_burst(cmd_input='TEST', delay_sec=15.0, prep_led_sec=0, target_ids=[], data=[0,0,0])
             print(f"{json.dumps(response, indent=4, ensure_ascii=False)}")
 
+            # Cmd ID 6: Schedules UPLOAD at 16.0s.
             response = sender.send_burst(cmd_input='UPLOAD', delay_sec=16.0, prep_led_sec=0, target_ids=[], data=[0,0,0])
             print(f"{json.dumps(response, indent=4, ensure_ascii=False)}")
             
