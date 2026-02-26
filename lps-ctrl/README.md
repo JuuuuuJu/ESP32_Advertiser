@@ -54,44 +54,6 @@ sequenceDiagram
 
 3. **Synchronization**: Receivers listen for these packets. Even if they receive the packet at different times (e.g., one at 1.9s remaining, another at 0.5s remaining), they both calculate the same absolute **Target Execution Time**, ensuring synchronized action.
 
-## TCP File Sender (Wi-Fi Update)
-
-In addition to the BLE command broadcasting, the system features a dedicated TCP Server module to distribute timeline files (`control.dat` and `frame.dat`) to up to 32 individual receivers over a local Wi-Fi network. 
-
-### TCP System Workflow
-
-```mermaid
-sequenceDiagram
-    participant PC as Python TCP Server
-    participant ESP as ESP32 (Receiver)
-    participant SD as SD Card
-
-    Note over PC, ESP: 1. Network Setup Phase
-    PC->>PC: Start TCP Server (Listening on Port 3333)
-    ESP->>ESP: Stop BLE & Initialize Wi-Fi
-    ESP->>PC: Connect to TCP Server
-    
-    Note over PC, ESP: 2. Identification & Validation
-    ESP->>PC: Send Player ID
-    PC->>PC: Verify if Player 1's files exist
-    
-    Note over PC, SD: 3. Download Phase
-    PC->>ESP: Send File Size (4 bytes)
-    PC->>ESP: Send control.dat Data Chunks
-    ESP->>SD: Write to SD Card
-    PC->>ESP: Send frame.dat Data Chunks
-    ESP->>SD: Write to SD Card
-    
-    Note over PC, ESP: 4. Completion Phase
-    ESP->>PC: Send ACK ("DONE\n")
-    PC->>PC: Close Connection for Player 1
-    ESP->>ESP: Stop Wi-Fi & Re-init BLE Receiver
-```
-### Key Features
-1. **Dynamic Path Routing**: The server automatically routes requests to specific directories based on the received Player ID (Supporting Player 1 to 32).
-
-2. **Auto-Recovery**: After a successful download and sending the DONE ACK, the ESP32 automatically shuts down its Wi-Fi modem and restarts the BLE scanning task to return to the performance state.
-
 ## API Documentation
 
 ### Class: `ESP32BTSender`
@@ -118,7 +80,7 @@ send_burst(cmd_input, delay_sec, prep_led_sec, target_ids, data)
 | --- | --- | --- |
 | **cmd_input** | `str` | Command type (see Mapping Table below). |
 | **delay_sec** | `float` | Time in seconds before the command executes. **Must be > 1.0s**. |
-| **prep_led_sec** | `float` | Duration for the "Preparation LED" effect. |
+| **prep_led_sec** | `float` | Duration for the "Preparation LED" effect. **Must be > 1.0s**. |
 | **target_ids** | `list[int]` | List of Target IDs (e.g., `[1, 2]`). Use `[0]` for **Broadcast All**. |
 | **data** | `list[int]` | list of 3 integers `[d0, d1, d2]` for extra parameters. |
 
@@ -133,11 +95,14 @@ The following commands are supported by the firmware:
 | **STOP** | `0x03` | Stop and reset position. | `[0, 0, 0]` |
 | **RELEASE** | `0x04` | Release memory/Unload. | `[0, 0, 0]` |
 | **TEST** | `0x05` | Test Mode / LED Color. | `[R, G, B]` (0-255) or `[0,0,0]` for default pattern. |
-| **CANCEL** | `0x06` | Cancel a pending command. | `[cmd_id, 0, 0]` (Use the ID returned by send_burst) |
+| **CANCEL** | `0x06` | Cancel a pending command. | `[cmd_id, 0, 0]` (Use the ID returned by send_burst). |
+| **UPLOAD** | `0x08` | Enter System Upload Mode. | `[0, 0, 0]`|
+| **RESET** | `0x09` | System Reboot. | `[0, 0, 0]` |
+* **NOTE:** **CHECK(0x07)** is called by `trigger_check`.
 
 #### Return Value
 
-Returns a dictionary containing the `command_id` assigned by the ESP32:
+Returns a dictionary containing the `command_id` assigned by the ESP32 (or a `-1` statusCode if it fails, such as when the Queue is full):
 
 ```json
 {
@@ -194,16 +159,6 @@ get_latest_report()
     }
 }
 ```
-### Class: `Esp32TcpServer` (TCP File Sender)
-
-```python
-__init__(control_paths_list, frame_paths_list, host='0.0.0.0', port=3333)
-```
-
-* **control_paths_list** (Required): A list of file paths pointing to control.dat for each player. Index 0 corresponds to Player 1, index 1 to Player 2, etc.
-* **frame_paths_list**(Required): A list of file paths pointing to frame.dat for each player. Indexing matches control_paths_list.
-* **host**: The IP address to bind the server to. Default is '0.0.0.0' (listens on all available network interfaces).
-* **port**: The port number to listen for incoming connections. Default is 3333.
 
 ## Constraints & Best Practices
 
@@ -227,92 +182,5 @@ Run the example script to see the flow of scheduling commands and checking statu
 
 ```bash
 python .\examples\lps_ctrl_ex.py
-```
-Return json:
 
-```json
-{
-    "from": "Host_PC",
-    "topic": "command",
-    "statusCode": 0,
-    "payload": {
-        "target_id": "[]",
-        "command": "PLAY",
-        "command_id": "0",
-        "message": "Success"
-    }
-}
-{
-    "from": "Host_PC",
-    "topic": "command",
-    "statusCode": 0,
-    "payload": {
-        "target_id": "[]",
-        "command": "PAUSE",
-        "command_id": "1",
-        "message": "Success"
-    }
-}
-{
-    "from": "Host_PC",
-    "topic": "command",
-    "statusCode": 0,
-    "payload": {
-        "target_id": "[]",
-        "command": "CANCEL",
-        "command_id": "2",
-        "message": "Success"
-    }
-}
-{
-    "from": "Host_PC",
-    "topic": "check_trigger",
-    "statusCode": 0,
-    "payload": {
-        "target_id": "[]",
-        "command": "CHECK",
-        "command_id": "3",
-        "message": "Check started (ID: 3)"
-    }
-}
-{
-    "from": "Host_PC",
-    "topic": "command",
-    "statusCode": 0,
-    "payload": {
-        "target_id": "[]",
-        "command": "STOP",
-        "command_id": "4",
-        "message": "Success"
-    }
-}
-{
-    "from": "Host_PC",
-    "topic": "command",
-    "statusCode": 0,
-    "payload": {
-        "target_id": "[]",
-        "command": "TEST",
-        "command_id": "5",
-        "message": "Success"
-    }
-}
-{
-    "from": "Host_PC",
-    "topic": "check_report",
-    "statusCode": 0,
-    "payload": {
-        "scan_duration_sec": 2,
-        "found_count": 1,
-        "found_devices": [
-            {
-                "target_id": 1,
-                "cmd_id": 4,
-                "cmd_type": 3,
-                "target_delay": 5405590,
-                "state": "READY"
-            }
-        ]
-    }
-}
 ```
