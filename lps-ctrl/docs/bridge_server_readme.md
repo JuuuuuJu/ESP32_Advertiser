@@ -44,11 +44,12 @@ The following diagram illustrates the data flow and the role of this Python brid
 1. Open your terminal or command prompt.
 2. Install the required Python packages using `pip`:
 ```bash
-pip install bless pyserial
+py -3.10 -m pip install bless pyserial
+py -3.10 -m pip install pysetupdi
+py -3.10 -m pip install https://github.com/gwangyi/pysetupdi/archive/refs/heads/master.zip
+py -3.10 .\scripts\bridge_server.py -p COM3
 ```
 
-
-* Note for Windows users: If you encounter an error regarding `pysetupdi` missing, install it directly from the source: `pip install https://github.com/gwangyi/pysetupdi/archive/refs/heads/master.zip`
 
 ---
 
@@ -61,13 +62,13 @@ Run the script from the command line, specifying the serial port your ESP32 is c
 **Windows Example:**
 
 ```bash
-python bridge_server.py -p COM3
+py -3.10 bridge_server.py -p COM3
 ```
 
 **macOS / Linux Example:**
 
 ```bash
-python bridge_server.py -p /dev/ttyUSB0
+py -3.10 bridge_server.py -p /dev/ttyUSB0
 ```
 
 ### Command Line Arguments
