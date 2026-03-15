@@ -105,7 +105,7 @@ The packet is constructed in `hci_cmd_send_ble_set_adv_data`. It uses Manufactur
 
 | Offset | Length | Value | Description |
 | --- | --- | --- | --- |
-| **0** | 3 | UUID | UUID (remember to change it to real one) |
+| **0** | 3 | `AD type` + `UUID` | AD type + UUID (remember to change it to real one) |
 | **3** | 1 | `cmd_type` | Command Type |
 | **4** | 8 | `target_mask` | 64-bit Target Mask |
 | **12** | 4 | `delay_us` | **Dynamic** Remaining Time (Big Endian) |
