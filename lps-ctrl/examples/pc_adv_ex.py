@@ -13,34 +13,52 @@ COMMANDS = {
     5: "TEST", 6: "CANCEL", 7: "CHECK", 8: "UPLOAD", 9: "RESET"
 }
 
+# Define state mapping (Reference from lps_ctrl.py)
+STATE_MAP = {
+    0: "UNLOADED", 1: "READY", 2: "PLAYING", 3: "PAUSE", 4: "TEST"
+}
+
 # Replace with your actual UUIDs
-UUID1 = -1
-UUID2 = -1
+UUID1 = 0x4C
+UUID2 = 0x44
+
+# Global set to filter duplicate reports within a single scan window
+seen_devices = set()
 
 def on_advertisement_received(sender, args):
     """
     Callback function triggered when a BLE advertisement is detected.
     Filters for our custom ACK packet (Manufacturer Data 0xFFFF -> LD 0x07)
     """
+    global seen_devices
     adv = args.advertisement
     for man_data in adv.manufacturer_data:
         # Check for our specific Company ID (0xFFFF)
         if man_data.company_id == 0xFFFF:
             reader = DataReader.from_buffer(man_data.data)
-            data_bytes = reader.read_bytes(man_data.data.length)
+            buffer = bytearray(man_data.data.length)
+            reader.read_bytes(buffer)
+            data_bytes = bytes(buffer)
             
             # Verify Magic Bytes (0x4C, 0x44) and ACK Command Type (0x07)
             if len(data_bytes) >= 11 and data_bytes[0] == 0x4C and data_bytes[1] == 0x44 and data_bytes[2] == 0x07:
                 player_id = data_bytes[3]
+                
+                # Deduplication check
+                if player_id in seen_devices:
+                    return
+                seen_devices.add(player_id)
+                
                 cmd_id = data_bytes[4]
                 cmd_type = data_bytes[5]
                 delay_ms = int.from_bytes(data_bytes[6:10], byteorder='big')
-                state = data_bytes[10]
+                state_raw = data_bytes[10]
                 
                 cmd_name = COMMANDS.get(cmd_type, "UNKNOWN")
-                rssi = args.raw_signal_strength_in_d_bm
+                state_name = STATE_MAP.get(state_raw, f"UNKNOWN({state_raw})")
+                rssi = args.raw_signal_strength_in_dbm
                 
-                print(f"   [REPORT] Player {player_id:02d} | State: {state} | Locked CMD: {cmd_name} (ID:{cmd_id}) | Remaining Delay: {delay_ms}ms | RSSI: {rssi}dBm")
+                print(f"   [REPORT] Player {player_id:02d} | State: {state_name} | Locked CMD: {cmd_name} (ID:{cmd_id}) | Remaining Delay: {delay_ms}ms | RSSI: {rssi}dBm")
 
 
 def create_payload(cmd_id, cmd_type, target_mask, delay_ms=2000, prep_ms=1000, extra_data=b''):
@@ -71,6 +89,7 @@ def create_payload(cmd_id, cmd_type, target_mask, delay_ms=2000, prep_ms=1000, e
     return magic_bytes + bytes([cmd_info]) + mask_bytes + delay_bytes + bytes(spec_bytes)
 
 def main():
+    global seen_devices
     # Initialize Publisher
     publisher = BluetoothLEAdvertisementPublisher()
     
@@ -119,8 +138,8 @@ def main():
 
             # --- 3. Enter Delay and Prep Time ---
             if cmd_type == 7: # CHECK command requires shorter default delay
-                delay_input = input("Enter Delay time in ms [Default: 100 for CHECK]: ").strip()
-                delay_ms = int(delay_input) if delay_input else 100
+                delay_input = input("Enter Delay time in ms [Default: 1500 for CHECK]: ").strip()
+                delay_ms = int(delay_input) if delay_input else 1500
             else:
                 delay_input = input("Enter Delay time in ms [Default: 2000]: ").strip()
                 delay_ms = int(delay_input) if delay_input else 2000
@@ -170,11 +189,15 @@ def main():
             
             if cmd_type == 7:
                 # For CHECK, broadcast briefly, then switch to listener mode
-                time.sleep(0.4) 
+                time.sleep(1.0) 
                 publisher.stop()
                 
-                listen_time = (delay_ms / 1000.0) + 1.5 # Listen slightly longer than the requested delay
+                listen_time = (delay_ms / 1000.0) + 1.5
                 print(f"\n[INFO] Broadcast sent. Listening for device reports for {listen_time:.1f} seconds...")
+                
+                # Clear the seen devices set before starting a new scan
+                seen_devices.clear()
+                
                 watcher.start()
                 time.sleep(listen_time)
                 watcher.stop()
