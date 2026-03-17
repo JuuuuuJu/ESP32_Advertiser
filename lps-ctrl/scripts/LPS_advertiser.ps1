@@ -56,7 +56,7 @@ $cmdInfo = [byte]((($CmdId -band 0x0F) -shl 4) -bor ($CmdType -band 0x0F))
 # Generate 8-byte Target Mask from comma-separated string
 $mask = [uint64]0
 if ($TargetIds.ToLower() -eq 'all' -or $TargetIds -eq '-1') {
-    $mask = 0xFFFFFFFFFFFFFFFF
+    $mask = [uint64]::MaxValue
 } else {
     $idArray = $TargetIds -split ','
     foreach ($idStr in $idArray) {
@@ -113,7 +113,7 @@ $payloadList.AddRange($specBytes)
 $payload = $payloadList.ToArray()
 $hexString = [BitConverter]::ToString($payload) -replace '-'
 Write-Host "Assembled Payload (Hex): $hexString" -ForegroundColor Cyan
-Write-Host "Target Mask (Hex): $([Convert]::ToString([long]$mask, 16))" -ForegroundColor Cyan
+Write-Host "Target Mask (Hex): $($mask.ToString('X16'))" -ForegroundColor Cyan
 
 # --- 2. WinRT BLE Advertising ---
 
