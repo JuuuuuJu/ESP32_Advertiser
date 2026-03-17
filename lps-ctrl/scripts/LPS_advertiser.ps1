@@ -1,14 +1,14 @@
 <#
 .SYNOPSIS
-ESP32 BLE LPS Controller CLI
+ESP32 BLE LPS Controller CLI (Multi-Target Supported)
 
 .DESCRIPTION
 Broadcasts BLE commands via PowerShell. Uses WinRT API to send Service Data (0x16) advertisements.
 Bypasses PowerShell 5.1 type-casting issues by invoking the .NET CLR directly for WinRT collections.
 
 .EXAMPLE
-.\LPS_advertiser.ps1 -CmdType 1 -TargetId -1 (or .\LPS_advertiser.ps1 -c 1 -t -1)
-.\LPS_advertiser.ps1 -CmdType 5 -TargetId 2 -R 255 -G 0 -B 0
+.\LPS_advertiser.ps1 -CmdType 1 -TargetIds "all"
+.\LPS_advertiser.ps1 -CmdType 5 -TargetIds "1,3,5" -R 255 -G 0 -B 0
 .\LPS_advertiser.ps1 -CmdType 6 -CancelId 3
 #>
 
@@ -19,10 +19,9 @@ param(
     [ValidateRange(1,9)]
     [int]$CmdType,
 
-    [Parameter(Mandatory=$true, HelpMessage="Target ID (0-63). Use -1 for global broadcast.")]
+    [Parameter(Mandatory=$true, HelpMessage="Target IDs (e.g., '0,1,2'. Use '-1' or 'all' for global broadcast.)")]
     [Alias('t')]
-    [ValidateRange(-1,63)]
-    [int]$TargetId,
+    [string]$TargetIds,
 
     [Parameter(Mandatory=$false, HelpMessage="Command ID (0-15)")]
     [ValidateRange(0,15)]
@@ -47,24 +46,39 @@ param(
     [int]$CancelId = 0
 )
 
-# --- 1. Payload Assembly (Update UUID as needed) ---
+# --- 1. Payload Assembly ---
 $uuid1 = [byte]0x00
 $uuid2 = [byte]0x00
 
 # Combine CmdId (High 4 bits) and CmdType (Low 4 bits)
 $cmdInfo = [byte]((($CmdId -band 0x0F) -shl 4) -bor ($CmdType -band 0x0F))
 
-# Generate 8-byte Target Mask
-$maskBytes = New-Object byte[] 8
-if ($TargetId -eq -1) {
-    # Set all bits to 1 for global broadcast
-    for ($i = 0; $i -lt 8; $i++) { $maskBytes[$i] = 0xFF }
+# Generate 8-byte Target Mask from comma-separated string
+$mask = [uint64]0
+if ($TargetIds.ToLower() -eq 'all' -or $TargetIds -eq '-1') {
+    $mask = 0xFFFFFFFFFFFFFFFF
 } else {
-    # Shift bit 1 to the target ID position
-    $mask = [uint64]1 -shl $TargetId
-    $maskBytes = [BitConverter]::GetBytes([uint64]$mask)
-    if (-not [BitConverter]::IsLittleEndian) { [Array]::Reverse($maskBytes) }
+    $idArray = $TargetIds -split ','
+    foreach ($idStr in $idArray) {
+        $idStr = $idStr.Trim()
+        if (-not [string]::IsNullOrEmpty($idStr)) {
+            $id = [int]$idStr
+            if ($id -ge 0 -and $id -le 63) {
+                $mask = $mask -bor ([uint64]1 -shl $id)
+            } else {
+                Write-Warning "Target ID $id is out of range (0-63) and will be ignored."
+            }
+        }
+    }
 }
+
+if ($mask -eq 0) {
+    Write-Error "No valid targets specified!"
+    exit
+}
+
+$maskBytes = [BitConverter]::GetBytes([uint64]$mask)
+if (-not [BitConverter]::IsLittleEndian) { [Array]::Reverse($maskBytes) }
 
 # Convert Delay to 4-byte Big-Endian
 $delayBytes = [BitConverter]::GetBytes([uint32]$DelayMs)
@@ -99,7 +113,7 @@ $payloadList.AddRange($specBytes)
 $payload = $payloadList.ToArray()
 $hexString = [BitConverter]::ToString($payload) -replace '-'
 Write-Host "Assembled Payload (Hex): $hexString" -ForegroundColor Cyan
-
+Write-Host "Target Mask (Hex): $([Convert]::ToString([long]$mask, 16))" -ForegroundColor Cyan
 
 # --- 2. WinRT BLE Advertising ---
 

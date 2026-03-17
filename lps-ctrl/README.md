@@ -317,3 +317,14 @@ async def main():
 if __name__ == '__main__':
     asyncio.run(main())
 ```
+## Alternative: PC-Based Software Broadcasting (No Extra Hardware)
+
+In addition to the hardware-based `ESP32BTSender`, this project also provides software-only tools to broadcast control commands directly from your PC's internal Bluetooth adapter, eliminating the need for an external ESP32 sender module. These tools include an interactive Python script (`pc_adv_ex.py`) and a native Windows PowerShell script (`LPS_advertiser.ps1`).
+
+### Architecture Note: GATT Server vs. Pure Broadcaster
+
+When developing PC-based BLE applications, standard libraries typically default to a **GATT Server** architecture. A GATT Server is designed for two-way, connection-based communication. However, it forces the host OS to inject mandatory metadata (like Service UUIDs and Device Names) into the BLE advertisement payload.
+
+To maintain maximum efficiency and synchronization for stage lighting, our receivers operate in **Passive Scanning** mode. Therefore, both `pc_adv_ex.py` and `LPS_advertiser.ps1` intentionally bypass the GATT Server architecture. Instead, they leverage native Windows WinRT APIs to function as **Pure Broadcasters**. This approach directly injects raw data into the primary advertisement packet, perfectly mimicking the lightweight and instant broadcast behavior of our hardware ESP32 sender. 
+
+Furthermore, the Python version (`pc_adv_ex.py`) extends this architecture by temporarily utilizing the WinRT Watcher API when issuing the `CHECK` command, allowing the PC to briefly listen for receiver status reports (ACK packets) without breaking the pure broadcaster paradigm.
